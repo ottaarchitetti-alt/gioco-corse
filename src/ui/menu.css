@@ -1,0 +1,30 @@
+/* ===== Menu principale ===== */
+.menu-page {
+  position: fixed; inset: 0; overflow: auto; pointer-events: auto;
+  background: radial-gradient(ellipse at top, #1d2632 0%, #0b0e13 70%);
+  display: flex; justify-content: center; align-items: flex-start; padding: 48px 16px; box-sizing: border-box;
+}
+.menu-card { width: 100%; max-width: 760px; }
+.menu-card h1 { margin: 0; font-size: 34px; }
+.menu-card .sub { color: var(--hud-dim); margin: 6px 0 22px; }
+.menu-toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.track-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.track-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: #151a21; border: 1px solid #2c333d; border-radius: 10px; padding: 12px 14px;
+}
+.track-name { font-size: 17px; font-weight: 600; }
+.track-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-size: 11px; font-weight: 500; color: var(--hud-dim); border: 1px solid #39414c; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+.menu-page .hint, .menu-page .empty { color: var(--hud-dim); font-size: 13px; }
+.menu-page .err { color: var(--bad); }
+
+/* Pulsanti condivisi da menu ed editor */
+.btn, .menu-page button, .editor button {
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid #39414c; background: #222933; color: var(--hud-fg);
+}
+.menu-page button:hover, .editor button:hover { background: #2b3440; }
+.menu-page button.primary, .editor button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+.menu-page button.danger, .editor button.danger { color: #ff8a8a; border-color: #5a2f33; }
+.editor button.active { background: #3a4a5e; border-color: #6d8fb7; }

@@ -133,6 +133,7 @@ export class Vehicle {
     this.z = this.prevZ = z;
     this.yaw = this.prevYaw = yaw;
     this.vx = this.vz = this.yawRate = 0;
+    this.speed = this.vLong = this.vLat = 0;
     this.aLong = this.aLat = this.aLongSmooth = this.aLatSmooth = 0;
     this.tires.forEach((t) => t.resetMotion());
     this.suspension.reset();

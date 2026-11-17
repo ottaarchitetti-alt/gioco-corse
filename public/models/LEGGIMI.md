@@ -70,5 +70,12 @@ Salva come `public/models/gt_car.glb` e ricarica il browser. Nella console del b
 ## 8. Elementi della pista
 La pista (asfalto, cordoli, prato) è **generata dal gioco** a partire dal disegno
 dell'editor. In Blender modellerai solo gli elementi di contorno (tribune, barriere,
-box, cartelloni): origine alla base, stesse regole di scala e orientamento.
-Dalla Fase 3 si potranno posizionare dall'editor.
+box, cartelloni):
+- origine a terra, al centro dell'oggetto; unità in metri;
+- la **lunghezza** dell'oggetto lungo l'asse **X** di Blender;
+- il lato **frontale** (es. dove guardano le tribune) verso **−Y** di Blender
+  (come il muso delle auto); export GLB con "+Y Up".
+
+Salva i file in `public/models/props/`. Nell'editor: strumento **Oggetti** → tipo
+"Modello GLB" → scrivi il percorso (es. `models/props/tribuna.glb`). Il campo
+"Lunghezza" scala il modello in modo che la sua dimensione lungo X sia quella indicata.

@@ -16,7 +16,9 @@ import { loadCarRig } from '../render/AssetManager';
 import { CameraRig } from '../render/CameraRig';
 import { CarView } from '../render/CarView';
 import { Renderer } from '../render/Renderer';
-import { loadTrack } from '../track/TrackData';
+import { geometryHash } from '../track/TrackData';
+import { TrackStore } from '../storage/TrackStore';
+import { navigate } from '../ui/router';
 import { buildTrackMesh } from '../track/TrackMeshBuilder';
 import { KERB_WIDTH, TrackSpline } from '../track/TrackSpline';
 import { DebugPanel, type SimSettings } from '../ui/DebugPanel';
@@ -24,7 +26,6 @@ import { Hud } from '../ui/Hud';
 import { Overlay } from '../ui/Overlay';
 
 const CAR_URL = 'cars/gt_segnaposto.car.json';
-const TRACK_URL = 'tracks/anello_prova.track.json';
 
 /** Superfici (Fase 7/8: valori diversi con pioggia, sporco, gomma depositata). */
 const SURFACES: Record<Surface['name'], Surface> = {
@@ -58,6 +59,7 @@ export class Game {
 
   /** Ultimo indice di campione pista per ogni ruota e per il baricentro (ricerca veloce). */
   private wheelHints = [-1, -1, -1, -1];
+  private pitHints = [-1, -1, -1, -1];
   private carHint = -1;
   private carS = 0;
   private carD = 0;
@@ -65,14 +67,18 @@ export class Game {
   private lastSteer = 0;
   private started = false;
 
-  constructor(private appEl: HTMLElement, private uiEl: HTMLElement) {}
+  /**
+   * @param trackId pista da caricare (inclusa o creata con l'editor)
+   * @param fromEditor true se si arriva dall'editor: nel menu di pausa c'è "Torna all'editor"
+   */
+  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false) {}
 
   async init(): Promise<void> {
     this.overlay = new Overlay(this.uiEl);
     this.renderer = new Renderer(this.appEl);
 
     // ---- Dati ----
-    const [car, trackData] = await Promise.all([loadCar(CAR_URL), loadTrack(TRACK_URL)]);
+    const [car, trackData] = await Promise.all([loadCar(CAR_URL), TrackStore.load(this.trackId)]);
     this.car = car;
     this.input.carSteeringLockDeg = car.steeringLockDeg;
 
@@ -93,13 +99,14 @@ export class Game {
     this.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(i, x, z));
     this.applySim();
     this.fitNewTyres();
-    this.placeOnTrack(this.track.length - 30);
+    this.placeOnGrid(0);
 
     // ---- Vista, HUD, cronometro ----
     this.view = new CarView(rig, this.vehicle);
     this.cameras = new CameraRig(this.renderer.camera, this.view);
     this.hud = new Hud(this.uiEl);
-    this.timer = new LapTimer(this.track.length, trackData.id, car.id, (e) => {
+    // i record valgono per QUESTA geometria: se modifichi la pista ripartono da zero
+    this.timer = new LapTimer(this.track.length, `${trackData.id}_${geometryHash(trackData)}`, car.id, (e) => {
       if (e.type === 'invalidated') this.hud.message('Giro non valido: limiti della pista', 2);
       else if (e.type === 'lap') {
         const txt = formatLapTime(e.time);
@@ -164,8 +171,27 @@ export class Game {
       const teeth = Math.abs(Math.sin((Math.PI * p.s) / 1.2)); // dentini ogni 1,2 m
       return { surface: SURFACES.cordolo, height: 0.022 * rise + 0.004 * teeth * rise };
     }
+    // corsia box: asfalto anche fuori dalla carreggiata della pista
+    const pit = this.track.pit;
+    if (pit) {
+      const q = pit.project(x, z, this.pitHints[i]);
+      this.pitHints[i] = q.index;
+      if (q.s > -3 && q.s < pit.length + 3 && Math.abs(q.d) <= pit.data.width / 2) return { surface: SURFACES.asfalto, height: 0 };
+    }
     const bumps = 0.012 * (Math.sin(p.s * 0.9) + Math.sin(p.d * 1.7 + p.s * 0.31)) * 0.5;
     return { surface: SURFACES.erba, height: bumps };
+  }
+
+  /** Mette l'auto ferma in un posto della griglia di partenza (0 = pole position). */
+  private placeOnGrid(slot: number): void {
+    const g = this.track.grid[slot];
+    if (!g) return this.placeOnTrack(this.track.length - 30);
+    // il posto in griglia indica il centro dell'auto; la fisica lavora sul baricentro (quasi lo stesso punto)
+    this.vehicle.reset(g.x, g.z, g.heading);
+    const idx = this.track.project(g.x, g.z).index;
+    this.wheelHints = [idx, idx, idx, idx];
+    this.pitHints = [-1, -1, -1, -1];
+    this.carHint = idx;
   }
 
   /** Mette l'auto ferma sulla linea centrale alla distanza s. */
@@ -175,6 +201,7 @@ export class Game {
     const smp = this.track.at(idx);
     this.vehicle.reset(smp.x, smp.z, smp.heading);
     this.wheelHints = [idx, idx, idx, idx];
+    this.pitHints = [-1, -1, -1, -1];
     this.carHint = idx;
   }
 
@@ -239,7 +266,11 @@ export class Game {
     } else {
       this.loop.paused = true;
       this.sound.setPaused(true);
-      this.overlay.showPause(() => this.togglePause());
+      this.overlay.showPause(() => this.togglePause(), [
+        { label: 'Ricomincia dalla griglia', act: () => { this.placeOnGrid(0); this.timer.reset(); this.togglePause(); } },
+        ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
+        { label: 'Menu principale', act: () => navigate('menu') },
+      ]);
     }
   }
 

@@ -1,6 +1,7 @@
 /**
  * Schermate a tutto schermo: avvio, pausa, aiuto comandi.
  */
+import { navigate } from './router';
 
 const CONTROLS = `
 <table>
@@ -47,20 +48,29 @@ export class Overlay {
   showStart(trackName: string, carName: string, onStart: () => void): void {
     this.card.innerHTML = `
       <h1>Simulatore di corsa</h1>
-      <p>Fase 2 · Prove libere · ${trackName} · ${carName}</p>
+      <p>Prove libere · ${trackName} · ${carName}</p>
       <h2>Comandi</h2>${CONTROLS}
-      <button>Entra in pista</button>`;
+      <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-menu>◀ Menu</button></div>`;
     this.el.classList.remove('hidden');
-    this.card.querySelector('button')!.addEventListener('click', () => {
+    this.card.querySelector('[data-menu]')!.addEventListener('click', () => navigate('menu'));
+    this.card.querySelector('[data-go]')!.addEventListener('click', () => {
       this.hide();
       onStart();
     }, { once: true });
   }
 
-  showPause(onResume: () => void): void {
-    this.card.innerHTML = `<h1>Pausa</h1><h2>Comandi</h2>${CONTROLS}<button>Riprendi</button>`;
+  showPause(onResume: () => void, extra: { label: string; act: () => void }[] = []): void {
+    this.card.innerHTML = `<h1>Pausa</h1>
+      <div class="actions"><button data-i="-1">Riprendi</button>${extra.map((e, i) => `<button class="secondary" data-i="${i}">${e.label}</button>`).join('')}</div>
+      <h2>Comandi</h2>${CONTROLS}`;
     this.el.classList.remove('hidden');
-    this.card.querySelector('button')!.addEventListener('click', onResume, { once: true });
+    this.card.querySelectorAll<HTMLButtonElement>('button[data-i]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const i = parseInt(b.dataset.i!);
+        if (i < 0) onResume();
+        else extra[i].act();
+      }, { once: true }),
+    );
   }
 
   showError(text: string): void {

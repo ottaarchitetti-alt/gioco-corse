@@ -61,7 +61,7 @@ export class Renderer {
 
     this.scene.fog = new THREE.Fog('#c9d8e6', 400, 2600);
 
-    window.addEventListener('resize', () => this.onResize());
+    window.addEventListener('resize', this.onResize);
   }
 
   /** Le ombre coprono solo un'area attorno all'auto: la spostiamo con lei. */
@@ -78,7 +78,22 @@ export class Renderer {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private onResize(): void {
+  /** Libera la memoria della GPU (usato dall'anteprima 3D dell'editor). */
+  dispose(): void {
+    window.removeEventListener('resize', this.onResize);
+    this.scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) {
+        m.geometry.dispose();
+        (Array.isArray(m.material) ? m.material : [m.material]).forEach((mat) => mat.dispose());
+      }
+    });
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    this.renderer.domElement.remove();
+  }
+
+  private onResize = (): void => {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);

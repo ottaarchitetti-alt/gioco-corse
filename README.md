@@ -16,7 +16,18 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 2 completata
+## Stato: Fase 3 completata
+- Menu principale: elenco piste (incluse + tue), nuova, duplica, importa/esporta, elimina
+- Editor 2D (`Modifica` dal menu): curve di Bézier con maniglie, larghezza per punto,
+  cordoli per tratto, linea di partenza e griglia, 3 settori, corsia box con limitatore
+  e box, oggetti di contorno (tribune, barriere, muri, gomme, alberi, edifici, cartelloni,
+  tuoi GLB), immagine di sfondo da ricalcare con calibrazione della scala,
+  annulla/ripeti, salvataggio automatico, avvisi (curve troppo strette, incroci),
+  anteprima 3D, "Guida" per provarla subito
+- Guida: si parte dalla pole position; la corsia box è percorribile;
+  i record sono legati alla geometria (se modifichi la pista ripartono da zero)
+
+## Fase 2
 - Sospensioni vere (molle, ammortizzatori, barre antirollio): il trasferimento di carico
   passa dalla carrozzeria che beccheggia e rolla; cordoli rialzati, erba sconnessa
 - Gomme: temperatura superficie/carcassa, pressione che sale col calore, usura,

@@ -1,17 +1,21 @@
 /**
  * Converte una TrackSpline in oggetti 3D: asfalto, cordoli, prato,
- * linea di partenza, portale e alberi di contorno.
+ * linea di partenza, griglia, portale, corsia box con edifici, oggetti
+ * di contorno e alberi.
  *
  * La pista NON si modella in Blender: viene generata da qui a partire dal
  * JSON dell'editor. In Blender si modellano solo gli elementi di contorno
- * (tribune, barriere, edifici) che in Fase 3 si posizioneranno dall'editor.
+ * (tribune, barriere, edifici), che si piazzano dall'editor (strumento Oggetti).
  */
 import * as THREE from 'three';
 import { asphaltTexture, checkerTexture, grassTexture, seededRandom } from '../render/textures';
-import { KERB_WIDTH, TrackSpline } from './TrackSpline';
+import { buildProp } from './PropBuilder';
+import { PROP_CATALOG } from './props';
+import { KERB_WIDTH, TrackSpline, type PitLaneSpline } from './TrackSpline';
 
 // Piccole altezze per evitare che superfici sovrapposte "sfarfallino"
 const Y_ROAD = 0.02;
+const Y_PIT = 0.012; // sotto la pista: dove si sovrappongono (ingresso/uscita) vince la pista
 const Y_KERB = 0.035;
 const Y_LINE = 0.03;
 /** Lunghezza (m) di una ripetizione della texture d'asfalto */
@@ -20,17 +24,105 @@ const ASPHALT_REPEAT = 10;
 export function buildTrackMesh(track: TrackSpline, anisotropy: number): THREE.Group {
   const group = new THREE.Group();
   group.name = 'track';
-  group.add(buildRoad(track, anisotropy));
+  const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTexture(anisotropy), roughness: 0.92, metalness: 0 });
+  group.add(buildRoad(track, asphalt));
   group.add(buildKerbs(track));
   group.add(buildGround(anisotropy));
   group.add(buildStartLine(track));
+  group.add(buildGridMarks(track));
   group.add(buildGantry(track));
-  group.add(buildTrees(track));
+  if (track.pit) group.add(buildPitLane(track.pit, asphalt));
+  for (const p of track.data.props) group.add(buildProp(p));
+  if (track.data.autoTrees) group.add(buildTrees(track));
   return group;
 }
 
+/** Una striscia piatta (es. linea bianca) centrata in (x,z), orientata con heading. */
+function flatStrip(x: number, z: number, heading: number, across: number, along: number, mat: THREE.Material, y = Y_LINE) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(across, along), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = y;
+  const h = new THREE.Group();
+  h.add(m);
+  h.position.set(x, 0, z);
+  h.rotation.y = heading;
+  m.receiveShadow = true;
+  return h;
+}
+
+/** Piazzole della griglia: una linea bianca davanti a ogni posto. */
+function buildGridMarks(track: TrackSpline): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'grid';
+  const white = new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.8 });
+  for (const s of track.grid) {
+    // davanti all'auto (l'origine del posto è il centro dell'auto)
+    const fx = Math.sin(s.heading) * 2.6, fz = Math.cos(s.heading) * 2.6;
+    g.add(flatStrip(s.x + fx, s.z + fz, s.heading, 2.6, 0.25, white));
+  }
+  return g;
+}
+
+/** Corsia box: asfalto, linee del limitatore, piazzole e edifici dei box. */
+function buildPitLane(pit: PitLaneSpline, asphalt: THREE.Material): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'pit_lane';
+  const hw = pit.data.width / 2;
+  const n = pit.samples.length;
+  const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  pit.samples.forEach((s) => {
+    pos.push(s.x + s.nx * hw, Y_PIT, s.z + s.nz * hw, s.x - s.nx * hw, Y_PIT, s.z - s.nz * hw);
+    uv.push(0, s.s / ASPHALT_REPEAT, 1, s.s / ASPHALT_REPEAT);
+  });
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, b, c, b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const road = new THREE.Mesh(geo, asphalt);
+  road.receiveShadow = true;
+  g.add(road);
+
+  // Linee del limitatore (bianco/blu) e piazzole (gialle)
+  const white = new THREE.MeshStandardMaterial({ color: '#f0f0f0', roughness: 0.8 });
+  const blue = new THREE.MeshStandardMaterial({ color: '#2a63d4', roughness: 0.8 });
+  const yellow = new THREE.MeshStandardMaterial({ color: '#f2c230', roughness: 0.8 });
+  for (const s of [pit.limiterStart, pit.limiterEnd]) {
+    const p = pit.atS(s);
+    g.add(flatStrip(p.x, p.z, p.heading, pit.data.width, 0.5, white, Y_PIT + 0.01));
+    const q = pit.atS(s + 0.6);
+    g.add(flatStrip(q.x, q.z, q.heading, pit.data.width, 0.5, blue, Y_PIT + 0.01));
+  }
+  for (const st of pit.stalls) g.add(flatStrip(st.x, st.z, st.heading, 2.4, 0.2, yellow, Y_PIT + 0.01));
+
+  // Edifici dei box: un blocco per box, con la "serranda" scura verso la corsia
+  const wall = new THREE.MeshStandardMaterial({ color: '#d9dde3', roughness: 0.7 });
+  const door = new THREE.MeshStandardMaterial({ color: '#2b3038', roughness: 0.5 });
+  const side = pit.data.garageSide === 'left' ? 1 : -1;
+  const spacing = pit.garages.length > 1 ? Math.abs(pit.garages[1].s - pit.garages[0].s) : 12;
+  for (const gar of pit.garages) {
+    const b = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(spacing * 0.98, 6, 10), wall);
+    body.position.y = 3;
+    body.castShadow = body.receiveShadow = true;
+    const d = new THREE.Mesh(new THREE.BoxGeometry(spacing * 0.75, 4, 0.1), door);
+    // Con rotazione heading − 90°: X locale = avanti lungo la corsia, Z locale = verso DESTRA.
+    // Box a sinistra (side = 1) → la corsia è alla sua destra (+Z); box a destra → −Z.
+    d.position.set(0, 2, side * 5.02);
+    b.add(body, d);
+    b.position.set(gar.x, 0, gar.z);
+    b.rotation.y = gar.heading - Math.PI / 2;
+    g.add(b);
+  }
+  return g;
+}
+
 /** Nastro d'asfalto: due vertici per campione (bordo sinistro e destro). */
-function buildRoad(track: TrackSpline, anisotropy: number): THREE.Mesh {
+function buildRoad(track: TrackSpline, mat: THREE.Material): THREE.Mesh {
   const n = track.samples.length;
   const pos: number[] = [], uv: number[] = [], idx: number[] = [];
   for (let i = 0; i <= n; i++) {
@@ -50,7 +142,6 @@ function buildRoad(track: TrackSpline, anisotropy: number): THREE.Mesh {
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
-  const mat = new THREE.MeshStandardMaterial({ map: asphaltTexture(anisotropy), roughness: 0.92, metalness: 0 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'road';
   mesh.receiveShadow = true;
@@ -175,6 +266,12 @@ function buildTrees(track: TrackSpline): THREE.Group {
     const z = minZ + rnd() * (maxZ - minZ);
     const p = track.project(x, z);
     if (Math.abs(p.d) < p.sample.width / 2 + 30) continue; // non troppo vicino alla pista
+    if (track.pit) {
+      const q = track.pit.project(x, z);
+      if (q.s > -20 && q.s < track.pit.length + 20 && Math.abs(q.d) < track.pit.data.width / 2 + 30) continue;
+    }
+    // né sopra gli oggetti piazzati dall'utente
+    if (track.data.props.some((o) => Math.hypot(o.x - x, o.z - z) < Math.max(o.size, PROP_CATALOG[o.type].depth(o.size)) / 2 + 8)) continue;
     positions.push([x, z, 0.7 + rnd() * 0.8]);
   }
 

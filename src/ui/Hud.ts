@@ -1,8 +1,38 @@
 /**
  * HUD: elementi HTML sopra il canvas 3D.
- * (Fase 2/7: stato gomme e carburante; Fase 4: settori e delta.)
+ *   - in alto a sinistra: sessione, giro, settori colorati, delta, classifica
+ *   - in alto al centro: semaforo di partenza e messaggi
+ *   - in basso: cruscotto, pedali, gomme
  */
 import { formatLapTime } from '../core/math';
+
+/** viola = record assoluto, verde = tuo migliore della sessione, giallo = più lento */
+export type SectorColor = 'viola' | 'verde' | 'giallo' | '';
+
+export interface TimingHud {
+  sessionName: string;
+  /** es. "Giro 3/10", "08:32", "Bandiera a scacchi" */
+  sessionInfo: string;
+  position: number;
+  total: number;
+  lap: number;
+  current: number;
+  /** Delta rispetto al riferimento (s): negativo = più veloce */
+  delta: number | null;
+  deltaRef: string;
+  valid: boolean;
+  lastLap: number | null;
+  bestLap: number | null;
+  recordLap: number | null;
+  sectors: { time: number | null; color: SectorColor }[];
+}
+
+export interface StandingRow {
+  pos: number;
+  name: string;
+  gap: string;
+  player: boolean;
+}
 
 export interface HudData {
   speedKmh: number;
@@ -10,11 +40,10 @@ export interface HudData {
   rpm: number;
   maxRpm: number;
   shifting: boolean;
-  lap: number;
-  current: number;
-  lastLap: number | null;
-  bestLap: number | null;
-  valid: boolean;
+  timing: TimingHud;
+  standings: StandingRow[];
+  /** Luci del semaforo accese (0..5), −1 = semaforo nascosto */
+  lights: number;
   throttle: number;
   brake: number;
   steer: number;
@@ -59,6 +88,9 @@ export class Hud {
   private tyres: HTMLDivElement;
   private msgTimer = 0;
   private lights: HTMLSpanElement[] = [];
+  private standings: HTMLDivElement;
+  private startLights: HTMLDivElement;
+  readonly lapList: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     this.laps = h('hud-panel hud-laps');
@@ -75,8 +107,11 @@ export class Hud {
     this.info = h('hud-panel hud-info');
     this.msg = h('hud-panel hud-msg');
     this.telemetry = h('hud-panel hud-telemetry mono');
+    this.standings = h('hud-panel hud-standings');
+    this.startLights = h('hud-panel hud-lights', '<span></span>'.repeat(5));
+    this.lapList = h('hud-panel hud-laplist mono');
     this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div>`);
-    root.append(this.laps, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -87,18 +122,22 @@ export class Hud {
     this.msgTimer = seconds;
   }
 
+  /** Toglie subito il messaggio a schermo. */
+  clearMessage(): void {
+    this.msgTimer = 0;
+    this.msg.classList.remove('show');
+  }
+
   update(d: HudData, frameDt: number): void {
     if (this.msgTimer > 0) {
       this.msgTimer -= frameDt;
       if (this.msgTimer <= 0) this.msg.classList.remove('show');
     }
 
-    const lapLabel = d.lap === 0 ? 'Giro di uscita' : `Giro ${d.lap}`;
-    this.laps.innerHTML = `
-      <div class="row"><span class="label">${lapLabel}</span>${d.valid ? '' : '<span class="invalid">NON VALIDO</span>'}</div>
-      <div class="row current mono ${d.valid ? '' : 'invalid'}">${d.lap === 0 ? '-:--.---' : formatLapTime(d.current)}</div>
-      <div class="row"><span class="label">Ultimo</span><span class="mono">${formatLapTime(d.lastLap)}</span></div>
-      <div class="row"><span class="label">Migliore</span><span class="mono best">${formatLapTime(d.bestLap)}</span></div>`;
+    this.renderTiming(d.timing);
+    this.renderStandings(d.standings);
+    this.startLights.style.display = d.lights >= 0 ? 'flex' : 'none';
+    this.startLights.querySelectorAll('span').forEach((l, i) => l.classList.toggle('on', i < d.lights));
 
     (this.dash.querySelector('.speed') as HTMLElement).textContent = Math.round(d.speedKmh).toString();
     (this.dash.querySelector('.gear') as HTMLElement).textContent = d.gear < 0 ? 'R' : d.gear === 0 ? 'N' : String(d.gear);
@@ -140,5 +179,43 @@ export class Hud {
     });
 
     this.info.innerHTML =`${d.trackName} · ${d.carName}<br>Telecamera: ${d.camera} (C) · Input: ${d.device}<br>H = aiuto · P = pausa`;
+  }
+
+  private renderTiming(t: TimingHud): void {
+    const lapLabel = t.lap === 0 ? 'Giro di uscita' : `Giro ${t.lap}`;
+    let delta = '';
+    if (t.delta !== null && t.lap > 0) {
+      const cls = t.delta <= 0 ? 'faster' : 'slower';
+      delta = `<span class="delta ${cls}" title="rispetto a ${t.deltaRef}">${t.delta <= 0 ? '−' : '+'}${Math.abs(t.delta).toFixed(2)}</span>`;
+    }
+    const sectors = t.sectors
+      .map((s, i) => `<span class="sector ${s.color}">${s.time !== null ? s.time.toFixed(2) : `S${i + 1}`}</span>`)
+      .join('');
+    this.laps.innerHTML = `
+      <div class="row head"><span>${t.sessionName}</span><span class="mono">${t.sessionInfo}</span></div>
+      <div class="row"><span class="pos">P${t.position}<small>/${t.total}</small></span><span class="label">${lapLabel}</span>${t.valid ? '' : '<span class="invalid">NON VALIDO</span>'}</div>
+      <div class="row current mono ${t.valid ? '' : 'invalid'}">${t.lap === 0 ? '-:--.---' : formatLapTime(t.current)}${delta}</div>
+      <div class="sectors">${sectors}</div>
+      <div class="row"><span class="label">Ultimo</span><span class="mono">${formatLapTime(t.lastLap)}</span></div>
+      <div class="row"><span class="label">Migliore</span><span class="mono green">${formatLapTime(t.bestLap)}</span></div>
+      <div class="row"><span class="label">Record</span><span class="mono best">${formatLapTime(t.recordLap)}</span></div>`;
+  }
+
+  private renderStandings(rows: StandingRow[]): void {
+    this.standings.style.display = rows.length > 1 ? '' : 'none';
+    this.standings.innerHTML = rows
+      .slice(0, 12)
+      .map((r) => `<div class="srow ${r.player ? 'me' : ''}"><span class="p">${r.pos}</span><span class="n">${r.name}</span><span class="g mono">${r.gap}</span></div>`)
+      .join('');
+  }
+
+  /** Elenco dei giri della sessione (tasto L). */
+  showLapList(html: string | null): void {
+    if (html === null) {
+      this.lapList.style.display = 'none';
+      return;
+    }
+    this.lapList.style.display = 'block';
+    this.lapList.innerHTML = html;
   }
 }

@@ -23,6 +23,37 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-laps .current { font-size: 26px; font-weight: 600; }
 .hud-laps .invalid { color: var(--bad); }
 .hud-laps .best { color: var(--best); }
+.hud-laps .green { color: var(--good); }
+.hud-laps .head { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #333a44; padding-bottom: 3px; margin-bottom: 3px; }
+.hud-laps .pos { font-size: 18px; font-weight: 800; margin-right: 6px; }
+.hud-laps .pos small { font-size: 11px; color: var(--hud-dim); font-weight: 500; }
+.hud-laps .delta { font-size: 15px; margin-left: 10px; padding: 1px 6px; border-radius: 4px; align-self: center; }
+.hud-laps .delta.faster { background: #1d5c3a; color: #b8ffd6; }
+.hud-laps .delta.slower { background: #6a2424; color: #ffd0d0; }
+.hud-laps .sectors { display: flex; gap: 4px; margin: 4px 0 6px; }
+.hud-laps .sector { flex: 1; text-align: center; font-size: 12px; padding: 2px 0; border-radius: 3px; background: #2a2e35; color: var(--hud-dim); font-variant-numeric: tabular-nums; }
+.hud-laps .sector.viola { background: #6b3fb8; color: #fff; }
+.hud-laps .sector.verde { background: #1f7a45; color: #fff; }
+.hud-laps .sector.giallo { background: #8a7413; color: #fff; }
+
+.hud-standings { top: 290px; left: 16px; min-width: 220px; padding: 6px 8px; font-size: 13px; }
+.hud-standings .srow { display: flex; gap: 8px; padding: 2px 4px; border-radius: 3px; }
+.hud-standings .srow.me { background: rgba(255, 204, 0, 0.18); }
+.hud-standings .p { width: 18px; text-align: right; font-weight: 700; }
+.hud-standings .n { flex: 1; }
+.hud-standings .g { color: var(--hud-dim); }
+
+.hud-lights { top: 70px; left: 50%; transform: translateX(-50%); display: none; gap: 12px; padding: 12px 18px; background: rgba(10, 10, 10, 0.85); }
+.hud-lights span { width: 34px; height: 34px; border-radius: 50%; background: #2a1515; border: 3px solid #111; }
+.hud-lights span.on { background: #ff2a1a; box-shadow: 0 0 18px #ff2a1a; }
+
+.hud-laplist { top: 90px; right: 16px; display: none; font-size: 12px; max-height: 60vh; overflow: hidden; }
+.hud-laplist table { border-collapse: collapse; }
+.hud-laplist td, .hud-laplist th { padding: 2px 7px; text-align: right; }
+.hud-laplist th { color: var(--hud-dim); font-weight: 500; }
+.hud-laplist .inv { color: var(--bad); text-decoration: line-through; }
+.hud-laplist .viola { color: #c49bff; }
+.hud-laplist .verde { color: var(--good); }
 
 .hud-dash { bottom: 18px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 300px; }
 .hud-dash .shift-lights { display: flex; gap: 4px; justify-content: center; margin-bottom: 6px; }
@@ -53,7 +84,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-msg { top: 22%; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: 600; padding: 10px 22px; transition: opacity 0.3s; opacity: 0; }
 .hud-msg.show { opacity: 1; }
 
-.hud-telemetry { top: 150px; left: 16px; font-size: 12px; white-space: pre; line-height: 1.45; display: none; }
+.hud-telemetry { top: 90px; right: 16px; font-size: 12px; white-space: pre; line-height: 1.45; display: none; }
 .hud-telemetry.show { display: block; }
 
 .hud-tyres { bottom: 18px; right: 16px; padding: 8px 10px; }
@@ -65,7 +96,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-tyres .w { height: 4px; background: #2a2e35; border-radius: 2px; margin-top: 3px; overflow: hidden; }
 .hud-tyres .w i { display: block; height: 100%; }
 
-.hud-graph { top: 90px; right: 16px; padding: 0; }
+.hud-graph { bottom: 160px; right: 16px; padding: 0; }
 
 /* ===== Schermate (avvio, pausa, aiuto) ===== */
 .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 8, 12, 0.72); pointer-events: auto; z-index: 10; }
@@ -83,3 +114,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .overlay .actions button { margin-top: 12px; }
 .overlay button.secondary { background: #2a313b; color: var(--hud-fg); font-weight: 500; }
 .overlay .loading { color: var(--hud-dim); }
+
+/* Scelta sessione e risultati */
+.overlay .segs { display: flex; gap: 6px; }
+.overlay button.seg { margin-top: 0; background: #2a313b; color: var(--hud-fg); font-weight: 500; }
+.overlay button.seg.on { background: var(--accent); color: #111; font-weight: 700; }
+.overlay .form { margin-top: 12px; }
+.overlay .form label { display: flex; align-items: center; gap: 10px; color: #c6ced8; }
+.overlay .form input { font: inherit; width: 80px; padding: 5px 7px; border-radius: 5px; border: 1px solid #39414c; background: #0f1318; color: var(--hud-fg); }
+.overlay p.small { font-size: 13px; }
+.overlay .results { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.overlay .results th { text-align: left; color: var(--hud-dim); font-weight: 500; border-bottom: 1px solid #2c333d; padding: 4px 6px; }
+.overlay .results td { padding: 4px 6px; border-bottom: 1px solid #1f252d; }
+.overlay .results td:first-child { color: var(--hud-fg); }
+.overlay .results tr.me td { background: rgba(255, 204, 0, 0.12); }
+.overlay .results .inv { color: var(--bad); text-decoration: line-through; }
+.overlay .results .viola { color: #c49bff; }
+.overlay .results .verde { color: var(--good); }
+.overlay .card { max-height: calc(100vh - 40px); overflow-y: auto; }

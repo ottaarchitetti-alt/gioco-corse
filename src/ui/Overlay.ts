@@ -1,6 +1,7 @@
 /**
  * Schermate a tutto schermo: avvio, pausa, aiuto comandi.
  */
+import { JUMP_START_PENALTY, SESSION_NAMES, type SessionConfig, type SessionType } from '../race/Session';
 import { navigate } from './router';
 
 const CONTROLS = `
@@ -12,6 +13,8 @@ const CONTROLS = `
   <tr><td>Q / Ctrl sx</td><td>Marcia giù (da ferma in 1ª → retromarcia)</td></tr>
   <tr><td>C</td><td>Cambia telecamera (esterna, cofano, abitacolo)</td></tr>
   <tr><td>R</td><td>Rimetti l'auto in pista</td></tr>
+  <tr><td>L</td><td>Elenco dei giri della sessione (tempi e settori)</td></tr>
+  <tr><td>F</td><td>Fantasma del giro migliore on/off (prove e qualifica)</td></tr>
   <tr><td>T</td><td>Telemetria a numeri (carichi, slip, temperature, usura)</td></tr>
   <tr><td>G</td><td>Grafici di telemetria (velocità, pedali, sterzo, g laterali, temperature)</td></tr>
   <tr><td>F2</td><td>Pannello di regolazione (fisica, aiuti, volante)</td></tr>
@@ -44,19 +47,70 @@ export class Overlay {
     this.el.classList.add('hidden');
   }
 
-  /** Schermata iniziale: il click serve anche ad attivare l'audio (regola dei browser). */
-  showStart(trackName: string, carName: string, onStart: () => void): void {
-    this.card.innerHTML = `
-      <h1>Simulatore di corsa</h1>
-      <p>Prove libere · ${trackName} · ${carName}</p>
-      <h2>Comandi</h2>${CONTROLS}
-      <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-menu>◀ Menu</button></div>`;
+  /**
+   * Schermata iniziale: scelta della sessione.
+   * Il click su "Entra in pista" serve anche ad attivare l'audio (regola dei browser).
+   */
+  showStart(
+    trackName: string,
+    carName: string,
+    recordText: string,
+    initial: SessionConfig,
+    onStart: (c: SessionConfig) => void,
+  ): void {
+    const cfg = { ...initial };
+    const typeBtn = (t: SessionType) =>
+      `<button class="seg ${cfg.type === t ? 'on' : ''}" data-type="${t}">${SESSION_NAMES[t]}</button>`;
+    const render = () => {
+      const opts =
+        cfg.type === 'gara'
+          ? `<label>Giri <input type="number" min="1" max="200" value="${cfg.laps}" data-f="laps"></label>
+             <p class="small">Partenza da fermo dalla griglia con il semaforo: muoversi prima che si spengano le luci costa ${JUMP_START_PENALTY} s di penalità.</p>`
+          : `<label>Durata (minuti${cfg.type === 'libere' ? ', 0 = senza limite' : ''})
+               <input type="number" min="${cfg.type === 'libere' ? 0 : 1}" max="180" value="${cfg.minutes}" data-f="minutes"></label>
+             <p class="small">${cfg.type === 'qualifica' ? 'Conta il giro valido più veloce. Allo scadere del tempo puoi finire il giro in corso.' : 'Giri liberi per provare pista e assetto. Il fantasma del tuo record ti fa da riferimento (tasto F).'}</p>`;
+      this.card.innerHTML = `
+        <h1>${trackName}</h1>
+        <p>${carName} · Record: <b>${recordText}</b></p>
+        <h2>Sessione</h2>
+        <div class="segs">${(['libere', 'qualifica', 'gara'] as SessionType[]).map(typeBtn).join('')}</div>
+        <div class="form">${opts}</div>
+        <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-menu>◀ Menu</button></div>
+        <h2>Comandi</h2>${CONTROLS}`;
+      this.card.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) =>
+        b.addEventListener('click', () => {
+          cfg.type = b.dataset.type as SessionType;
+          if (cfg.type === 'qualifica' && cfg.minutes <= 0) cfg.minutes = 10;
+          render();
+        }),
+      );
+      this.card.querySelectorAll<HTMLInputElement>('[data-f]').forEach((el) =>
+        el.addEventListener('change', () => {
+          const v = Math.max(0, Math.round(parseFloat(el.value) || 0));
+          if (el.dataset.f === 'laps') cfg.laps = Math.max(1, v);
+          else cfg.minutes = cfg.type === 'libere' ? v : Math.max(1, v);
+        }),
+      );
+      this.card.querySelector('[data-menu]')!.addEventListener('click', () => navigate('menu'));
+      this.card.querySelector('[data-go]')!.addEventListener('click', () => {
+        // legge anche un campo modificato senza aver premuto Invio
+        this.card.querySelectorAll<HTMLInputElement>('[data-f]').forEach((el) => el.dispatchEvent(new Event('change')));
+        this.hide();
+        onStart(cfg);
+      }, { once: true });
+    };
+    render();
     this.el.classList.remove('hidden');
-    this.card.querySelector('[data-menu]')!.addEventListener('click', () => navigate('menu'));
-    this.card.querySelector('[data-go]')!.addEventListener('click', () => {
-      this.hide();
-      onStart();
-    }, { once: true });
+  }
+
+  /** Risultati di fine sessione. */
+  showResults(title: string, html: string, actions: { label: string; act: () => void; primary?: boolean }[]): void {
+    this.card.innerHTML = `<h1>${title}</h1>${html}
+      <div class="actions">${actions.map((a, i) => `<button class="${a.primary ? '' : 'secondary'}" data-i="${i}">${a.label}</button>`).join('')}</div>`;
+    this.el.classList.remove('hidden');
+    this.card.querySelectorAll<HTMLButtonElement>('button[data-i]').forEach((b) =>
+      b.addEventListener('click', () => actions[parseInt(b.dataset.i!)].act(), { once: true }),
+    );
   }
 
   showPause(onResume: () => void, extra: { label: string; act: () => void }[] = []): void {

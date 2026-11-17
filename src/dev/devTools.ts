@@ -6,6 +6,7 @@
  *                                      simulati alla massima velocità (non in tempo reale),
  *                                      stampa tempi, temperature, pressioni e usura a ogni giro
  *   devTools.autopilot(5, { latG: 1.2 })  → pilota più prudente
+ *   opzioni: records (i giri valgono come record), session (config sessione), keepSession
  *
  * Serve per tarare la fisica in modo ripetibile. NON è l'IA dei bot (Fase 5),
  * anche se ne anticipa l'idea: segue la linea centrale e frena in base alla curvatura.
@@ -13,7 +14,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function installDevTools(game: any): void {
-  const autopilot = (laps: number, opts: { latG?: number } = {}): string => {
+  const autopilot = (laps: number, opts: { latG?: number; records?: boolean; session?: any; keepSession?: boolean } = {}): string => {
     const g = game;
     const v = g.vehicle;
     const tr = g.track;
@@ -26,14 +27,20 @@ export function installDevTools(game: any): void {
     const origMsg = g.hud.message.bind(g.hud);
     g.input.read = () => ({ ...cmd });
     g.hud.message = () => {};
+    g.recordsEnabled = !!opts.records; // di norma i giri del pilota automatico non sono record
 
     const lines: string[] = [];
-    g.placeOnTrack(tr.length - 30);
-    g.timer.reset();
+    const prevCfg = { ...g.sessionCfg };
+    g.startSession(opts.session ?? { type: 'libere', minutes: 0, laps: 5 }, false);
+    if (!opts.session) {
+      g.placeOnTrack(tr.length - 30);
+      g.player.timing.resetPosition();
+    }
+    const timing = () => g.player.timing;
     let lastLap = 0;
     let simT = 0;
     try {
-      while (g.timer.lap <= laps && simT < laps * 200) {
+      while (timing().lap <= laps && simT < laps * 200 && g.session.state !== 'finita') {
         const p = tr.project(v.x, v.z, g.carHint);
         // Sterzo: punta un punto della linea centrale più avanti con la velocità
         const look = Math.round((6 + v.speed * 0.45) / (tr.length / n));
@@ -52,15 +59,17 @@ export function installDevTools(game: any): void {
         const err = vmax - v.speed;
         cmd.throttle = err > 0 ? Math.min(1, err * 0.4) : 0;
         cmd.brake = err < -0.5 ? Math.min(1, -err * 0.25) : 0;
+        if (g.session.state === 'semaforo') { cmd.throttle = 0; cmd.brake = 1; } // fermo fino al via
 
         g.fixedUpdate(dt);
         simT += dt;
-        if (g.timer.lap !== lastLap) {
-          lastLap = g.timer.lap;
+        if (timing().lap !== lastLap) {
+          lastLap = timing().lap;
+          const last = timing().laps[timing().laps.length - 1];
           const t = v.tires as any[];
           const f = (fn: (x: any) => string) => t.map(fn).join('/');
           lines.push(
-            `giro ${lastLap - 1}: ${g.timer.lastLap?.toFixed(2) ?? '-'}s` +
+            `giro ${lastLap - 1}: ${last ? last.time.toFixed(2) + 's' + (last.valid ? '' : ' (non valido)') + ' settori ' + last.sectors.map((x: number | null) => x?.toFixed(2)).join('/') : '-'}` +
               `  Tsup ${f((x) => x.surfaceTemp.toFixed(0))}  Tcarc ${f((x) => x.coreTemp.toFixed(0))}` +
               `  p ${f((x) => x.pressure.toFixed(2))}  batt ${f((x) => (x.tread * 100).toFixed(1))}` +
               `  grip ${f((x) => (x.gripFactor * 100).toFixed(0))}`,
@@ -70,8 +79,8 @@ export function installDevTools(game: any): void {
     } finally {
       g.input.read = origRead;
       g.hud.message = origMsg;
-      g.placeOnTrack(tr.length - 30);
-      g.timer.reset();
+      g.recordsEnabled = true;
+      if (!opts.keepSession) g.startSession(prevCfg, false);
     }
     return lines.join('\n');
   };

@@ -16,7 +16,16 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 3 completata
+## Stato: Fase 4 completata
+- Sessioni: prove libere (con o senza limite di tempo), qualifica (a tempo, giro in corso
+  completabile allo scadere), gara (a giri, partenza da fermo con semaforo, +5 s per
+  partenza anticipata), risultati con classifica e giri, "Vai in gara" dopo la qualifica
+- Cronometraggio: 3 settori colorati (viola record, verde migliore, giallo), delta in
+  tempo reale, giri annullati (limiti, tagli, riposizionamento), giro ideale
+- Record per pista+auto con fantasma (tasto F), elenco giri (tasto L)
+- In prova/qualifica si parte dai box (se la pista li ha), in gara dalla griglia
+
+## Fase 3
 - Menu principale: elenco piste (incluse + tue), nuova, duplica, importa/esporta, elimina
 - Editor 2D (`Modifica` dal menu): curve di Bézier con maniglie, larghezza per punto,
   cordoli per tratto, linea di partenza e griglia, 3 settori, corsia box con limitatore

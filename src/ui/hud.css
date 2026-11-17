@@ -1,0 +1,71 @@
+/* ===== Base ===== */
+:root {
+  --hud-bg: rgba(12, 14, 18, 0.62);
+  --hud-fg: #f2f4f7;
+  --hud-dim: #9aa3ae;
+  --accent: #ffcc00;
+  --good: #3ddc84;
+  --bad: #ff4d4d;
+  --best: #b36bff;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--hud-fg); }
+#app canvas { display: block; }
+#ui { position: fixed; inset: 0; pointer-events: none; }
+.mono { font-variant-numeric: tabular-nums; font-family: 'Consolas', 'Cascadia Mono', monospace; }
+
+/* ===== Pannelli HUD ===== */
+.hud-panel { position: absolute; background: var(--hud-bg); border-radius: 8px; padding: 10px 14px; backdrop-filter: blur(3px); }
+
+.hud-laps { top: 16px; left: 16px; min-width: 220px; }
+.hud-laps .row { display: flex; justify-content: space-between; gap: 18px; font-size: 15px; line-height: 1.55; }
+.hud-laps .label { color: var(--hud-dim); }
+.hud-laps .current { font-size: 26px; font-weight: 600; }
+.hud-laps .invalid { color: var(--bad); }
+.hud-laps .best { color: var(--best); }
+
+.hud-dash { bottom: 18px; left: 50%; transform: translateX(-50%); text-align: center; min-width: 300px; }
+.hud-dash .shift-lights { display: flex; gap: 4px; justify-content: center; margin-bottom: 6px; }
+.hud-dash .shift-lights span { width: 16px; height: 8px; border-radius: 2px; background: #333; }
+.hud-dash .shift-lights span.on-g { background: var(--good); }
+.hud-dash .shift-lights span.on-y { background: var(--accent); }
+.hud-dash .shift-lights span.on-r { background: var(--bad); }
+.hud-dash .shift-lights.flash span { background: #4aa3ff; }
+.hud-dash .main { display: flex; align-items: flex-end; justify-content: center; gap: 22px; }
+.hud-dash .speed { font-size: 46px; font-weight: 700; line-height: 1; }
+.hud-dash .unit { font-size: 13px; color: var(--hud-dim); }
+.hud-dash .gear { font-size: 52px; font-weight: 800; line-height: 1; color: var(--accent); min-width: 40px; }
+.hud-dash .rpm { font-size: 13px; color: var(--hud-dim); margin-top: 4px; }
+.hud-dash .aids { margin-top: 6px; display: flex; gap: 6px; justify-content: center; font-size: 11px; }
+.hud-dash .aids span { padding: 1px 6px; border-radius: 3px; background: #2a2e35; color: var(--hud-dim); }
+.hud-dash .aids span.on { color: #111; background: var(--accent); }
+
+.hud-inputs { bottom: 18px; left: 16px; display: flex; gap: 6px; align-items: flex-end; height: 92px; }
+.hud-inputs .bar { width: 12px; height: 80px; background: #2a2e35; border-radius: 3px; position: relative; overflow: hidden; }
+.hud-inputs .bar i { position: absolute; left: 0; right: 0; bottom: 0; }
+.hud-inputs .thr i { background: var(--good); }
+.hud-inputs .brk i { background: var(--bad); }
+.hud-inputs .steer { width: 110px; height: 12px; background: #2a2e35; border-radius: 3px; position: relative; align-self: center; }
+.hud-inputs .steer i { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--hud-fg); left: 50%; }
+
+.hud-info { top: 16px; right: 16px; font-size: 12px; color: var(--hud-dim); text-align: right; line-height: 1.6; }
+
+.hud-msg { top: 22%; left: 50%; transform: translateX(-50%); font-size: 22px; font-weight: 600; padding: 10px 22px; transition: opacity 0.3s; opacity: 0; }
+.hud-msg.show { opacity: 1; }
+
+.hud-telemetry { top: 150px; left: 16px; font-size: 12px; white-space: pre; line-height: 1.45; display: none; }
+.hud-telemetry.show { display: block; }
+
+/* ===== Schermate (avvio, pausa, aiuto) ===== */
+.overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 8, 12, 0.72); pointer-events: auto; z-index: 10; }
+.overlay.hidden { display: none; }
+.overlay .card { background: #151a21; border: 1px solid #2c333d; border-radius: 12px; padding: 28px 34px; max-width: 620px; width: calc(100% - 48px); box-sizing: border-box; }
+.overlay h1 { margin: 0 0 4px; font-size: 28px; }
+.overlay h2 { margin: 18px 0 8px; font-size: 15px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+.overlay p { color: var(--hud-dim); margin: 6px 0; line-height: 1.5; }
+.overlay table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.overlay td { padding: 3px 0; vertical-align: top; }
+.overlay td:first-child { color: var(--accent); white-space: nowrap; padding-right: 16px; }
+.overlay button { margin-top: 20px; font: inherit; font-size: 16px; font-weight: 600; padding: 10px 26px; border-radius: 8px; border: 0; background: var(--accent); color: #111; cursor: pointer; }
+.overlay button:hover { filter: brightness(1.1); }
+.overlay .loading { color: var(--hud-dim); }

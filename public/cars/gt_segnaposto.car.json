@@ -1,0 +1,59 @@
+{
+  "id": "gt_segnaposto",
+  "name": "GT (segnaposto)",
+  "model": "models/gt_car.glb",
+  "geometryFromModel": true,
+
+  "mass": 1330,
+  "yawInertia": 2100,
+  "cgHeight": 0.44,
+  "wheelbase": 2.65,
+  "trackFront": 1.66,
+  "trackRear": 1.62,
+  "weightFront": 0.46,
+  "rollStiffnessFront": 0.56,
+  "loadTransferLag": 0.06,
+
+  "wheelRadius": 0.34,
+  "wheelInertia": 1.4,
+  "tire": {
+    "mu": 1.62,
+    "nominalLoad": 4000,
+    "loadSensitivity": 0.12,
+    "peakSlipRatio": 0.09,
+    "peakSlipAngleDeg": 7.5,
+    "slideFactor": 0.78,
+    "falloff": 0.9,
+    "relaxLong": 0.25,
+    "relaxLat": 0.45,
+    "rollingResistance": 0.013
+  },
+
+  "steeringLockDeg": 540,
+  "steeringRatio": 12,
+
+  "idleRpm": 1100,
+  "maxRpm": 8600,
+  "torqueCurve": [
+    [1000, 280], [2500, 400], [4000, 480], [5500, 520],
+    [6500, 515], [7500, 485], [8300, 440], [8600, 420]
+  ],
+  "engineBrakeCurve": [[1000, 20], [4000, 45], [8600, 85]],
+  "engineInertia": 0.22,
+
+  "gears": [3.08, 2.19, 1.71, 1.39, 1.16, 0.98],
+  "reverseGear": 2.9,
+  "finalDrive": 3.6,
+  "drivetrainEfficiency": 0.9,
+  "shiftTime": 0.08,
+  "diffLockCoeff": 60,
+
+  "maxBrakeTorque": 8200,
+  "brakeBiasFront": 0.58,
+
+  "dragArea": 0.78,
+  "liftArea": 1.55,
+  "aeroBalanceFront": 0.42,
+
+  "fuelKg": 60
+}

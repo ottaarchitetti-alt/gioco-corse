@@ -40,7 +40,7 @@ let builtinCache: BuiltinEntry[] | null = null;
 
 async function builtins(): Promise<BuiltinEntry[]> {
   if (!builtinCache) {
-    const res = await fetch('tracks/index.json');
+    const res = await fetch('tracks/index.json', { cache: 'no-cache' });
     builtinCache = res.ok ? ((await res.json()) as BuiltinEntry[]) : [];
   }
   return builtinCache;
@@ -69,7 +69,7 @@ export const TrackStore = {
     const b = (await builtins()).find((e) => e.id === id);
     let data: TrackData;
     if (b) {
-      const res = await fetch(`tracks/${b.file}`);
+      const res = await fetch(`tracks/${b.file}`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`Pista non trovata: ${b.file}`);
       data = migrateTrack(await res.json());
     } else {

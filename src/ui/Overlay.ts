@@ -60,6 +60,7 @@ export class Overlay {
     hasQuali: boolean,
     onStart: (c: SessionConfig) => void,
     onCalibrate: () => void,
+    onSetup: () => void,
   ): void {
     const cfg = { ...initial };
     const typeBtn = (t: SessionType) =>
@@ -86,7 +87,13 @@ export class Overlay {
         <div class="form">${opts}</div>
         <h2>Avversari</h2>
         <div class="form">${rivals}</div>
-        <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-cal>🎮 Calibra volante</button><button class="secondary" data-menu>◀ Menu</button></div>
+        <h2>Strategia</h2>
+        <div class="form">
+          <label>Usura gomme × <input type="number" min="0" max="10" step="0.5" value="${cfg.wearMultiplier}" data-m="wearMultiplier"></label>
+          <label>Consumo carburante × <input type="number" min="0" max="10" step="0.5" value="${cfg.fuelMultiplier}" data-m="fuelMultiplier"></label>
+          <p class="small">1 = realistico. Valori più alti rendono le soste necessarie anche in gare brevi.</p>
+        </div>
+        <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-setup>🔧 Assetto</button><button class="secondary" data-cal>🎮 Calibra volante</button><button class="secondary" data-menu>◀ Menu</button></div>
         <h2>Comandi</h2>${CONTROLS}`;
       this.card.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) =>
         b.addEventListener('click', () => {
@@ -110,10 +117,18 @@ export class Overlay {
         }),
       );
       this.card.querySelector('[data-cal]')!.addEventListener('click', onCalibrate);
+      this.card.querySelector('[data-setup]')!.addEventListener('click', onSetup);
+      this.card.querySelectorAll<HTMLInputElement>('[data-m]').forEach((el) =>
+        el.addEventListener('change', () => {
+          const v = Math.max(0, parseFloat(el.value.replace(',', '.')) || 0);
+          if (el.dataset.m === 'wearMultiplier') cfg.wearMultiplier = v;
+          else cfg.fuelMultiplier = v;
+        }),
+      );
       this.card.querySelector('[data-menu]')!.addEventListener('click', () => navigate('menu'));
       this.card.querySelector('[data-go]')!.addEventListener('click', () => {
         // legge anche un campo modificato senza aver premuto Invio
-        this.card.querySelectorAll<HTMLInputElement>('[data-f]').forEach((el) => el.dispatchEvent(new Event('change')));
+        this.card.querySelectorAll<HTMLInputElement>('[data-f],[data-m]').forEach((el) => el.dispatchEvent(new Event('change')));
         this.hide();
         onStart(cfg);
       }, { once: true });

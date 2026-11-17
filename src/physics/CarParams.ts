@@ -150,8 +150,13 @@ export interface CarParams {
   liftArea: number; // Cl·A (m²), deportanza
   aeroBalanceFront: number; // frazione della deportanza all'anteriore
 
-  // --- Carburante (Fase 7: consumo; ora conta solo il peso) ---
+  // --- Carburante ---
+  /** Carburante di partenza predefinito (kg) */
   fuelKg: number;
+  /** Capacità del serbatoio (kg) */
+  fuelCapacity: number;
+  /** Rendimento termico del motore (frazione dell'energia del carburante che diventa lavoro) */
+  engineEfficiency: number;
 
   /** Assetto di partenza */
   setup: CarSetup;
@@ -159,7 +164,7 @@ export interface CarParams {
 
 /** Carica un'auto da /public/cars. */
 export async function loadCar(url: string): Promise<CarParams> {
-  const res = await fetch(url);
+  const res = await fetch(url, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`Impossibile caricare l'auto: ${url}`);
   return (await res.json()) as CarParams;
 }

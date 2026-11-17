@@ -37,6 +37,9 @@ import { Hud, type SectorColor, type TimingHud } from '../ui/Hud';
 import { Overlay } from '../ui/Overlay';
 import { navigate } from '../ui/router';
 import { TelemetryGraph } from '../ui/TelemetryGraph';
+import { PitController, serviceTime, type PitPlan } from '../strategy/PitController';
+import { applySetup, loadSetup, saveSetup, type SetupValues } from '../strategy/Setup';
+import type { PitStall } from '../track/TrackSpline';
 
 const CAR_URL = 'cars/gt_segnaposto.car.json';
 
@@ -55,7 +58,11 @@ const BOT_AIDS_NO_ABS: DrivingAids = { ...BOT_AIDS, abs: false };
 /** Distanza (m) entro cui si sente la scia dell'auto davanti */
 const DRAFT_RANGE = 40;
 const DEFAULT_SIM: SimSettings = { airTemp: 22, trackTemp: 32, wearMultiplier: 1, tyreBlankets: false };
-const DEFAULT_SESSION: SessionConfig = { type: 'libere', minutes: 0, laps: 5, opponents: 9, difficulty: 'medio', grid: 'meta' };
+const DEFAULT_SESSION: SessionConfig = {
+  type: 'libere', minutes: 0, laps: 5, opponents: 9, difficulty: 'medio', grid: 'meta', wearMultiplier: 1, fuelMultiplier: 1,
+};
+/** Stima iniziale del consumo (kg per km a moltiplicatore 1), poi si misura giro per giro */
+const FUEL_PER_KM_EST = 0.36; // misurato: ~0,76 kg/giro sui 2,2 km dell'Anello
 /** Temperatura delle gomme montate con le termocoperte (°C) */
 const BLANKET_TEMP = 80;
 
@@ -80,6 +87,14 @@ interface CarEntity {
   /** punto di partenza (per la partenza anticipata) */
   startX: number;
   startZ: number;
+  /** corsia box: pilota automatico attivo, piazzola assegnata, sosta richiesta */
+  pit: PitController | null;
+  stall: PitStall | null;
+  pitRequest: PitPlan | null;
+  pitStops: number;
+  /** carburante usato al passaggio sul traguardo e consumo medio al giro */
+  fuelAtLine: number;
+  fuelPerLap: number | null;
 }
 
 export class Game {
@@ -94,6 +109,15 @@ export class Game {
   private car!: CarParams;
   /** Copia "pulita" dell'auto per i bot (le regolazioni F2 valgono solo per te) */
   private botCar!: CarParams;
+  /** Auto di fabbrica (dal file JSON), base per l'assetto */
+  private baseCar!: CarParams;
+  private setupValues!: SetupValues;
+  /** Piano del prossimo pit stop del pilota */
+  private pitPlan: PitPlan = { changeTyres: true, compound: 'media', addFuel: 0 };
+  /** avvisi radio già dati in questa sessione (per non ripeterli) */
+  private radioSaid = new Set<string>();
+  /** Distanza sulla pista dell'ingresso box */
+  private pitEntryS = 0;
   private playerRig!: CarRig;
   private track!: TrackSpline;
   private line!: RacingLine;
@@ -166,7 +190,12 @@ export class Game {
       Object.assign(car, rig.measured);
       console.info('[Game] Geometria letta dal modello:', rig.measured);
     }
+    this.baseCar = structuredClone(car);
     this.botCar = structuredClone(car);
+    // assetto salvato per questa pista (solo per la tua auto)
+    this.setupValues = loadSetup(trackData.id, this.baseCar);
+    applySetup(car, this.baseCar, this.setupValues);
+    this.pitPlan.compound = car.setup.compound;
     this.playerRig = rig;
     this.ghost = new GhostPlayer(rig.root);
     this.renderer.scene.add(this.ghost.object);
@@ -175,6 +204,7 @@ export class Game {
     this.track = new TrackSpline(trackData);
     this.renderer.scene.add(buildTrackMesh(this.track, this.renderer.maxAnisotropy));
     this.line = new RacingLine(this.track);
+    if (this.track.pit) this.pitEntryS = this.track.project(this.track.pit.samples[0].x, this.track.pit.samples[0].z).s;
 
     // ---- Record personale (legato alla geometria: se modifichi la pista riparte da zero) ----
     this.recordKey = RecordStore.key(`${trackData.id}_${geometryHash(trackData)}`, car.id);
@@ -223,6 +253,7 @@ export class Game {
     const e = {
       id, name, isPlayer, bot: null,
       wheelHints: [-1, -1, -1, -1], pitHints: [-1, -1, -1, -1], hint: -1, s: 0, d: 0, startX: 0, startZ: 0,
+      pit: null, stall: null, pitRequest: null, pitStops: 0, fuelAtLine: 0, fuelPerLap: null,
     } as unknown as CarEntity;
     e.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(e, i, x, z));
     e.view = new CarView(rig, e.vehicle);
@@ -248,6 +279,7 @@ export class Game {
         this.startSession(cfg);
       },
       () => void this.openWheelCalibration(),
+      () => void this.openSetup(),
     );
   }
 
@@ -273,6 +305,7 @@ export class Game {
       this.session.add(e.competitor);
       this.fitNewTyres(e.vehicle);
     }
+    this.prepareStrategy();
 
     this.sessionGhost = null;
     this.lastLapShown = null;
@@ -319,7 +352,11 @@ export class Game {
       });
     } else {
       // prove/qualifica: tu ai box (se ci sono), i bot sparsi lungo la pista
-      if (!this.placeInPits(this.playerEntity)) this.placeOnTrack(this.playerEntity, this.track.length - 150);
+      if (this.placeInPits(this.playerEntity)) {
+        // si esce dai box con il pilota automatico (limitatore), poi guidi tu
+        const pe = this.playerEntity;
+        pe.pit = new PitController(this.track.pit!, pe.stall!, pe.vehicle, { changeTyres: false, compound: '', addFuel: 0 }, () => {}, 'uscita');
+      } else this.placeOnTrack(this.playerEntity, this.track.length - 150);
       const L = this.track.length;
       bots.forEach((e, k) => this.placeOnLine(e, L * 0.12 + (k * L * 0.85) / Math.max(1, bots.length)));
     }
@@ -352,7 +389,11 @@ export class Game {
   }
 
   private onTimingEvent(c: Competitor, e: TimingEvent): void {
-    if (e.type === 'lineCrossed') this.session.onLineCrossed(c);
+    if (e.type === 'lineCrossed') {
+      this.session.onLineCrossed(c);
+      const ent = this.entities.find((x) => x.competitor === c);
+      if (ent) this.onLapLine(ent);
+    }
     if (!c.isPlayer) return;
     switch (e.type) {
       case 'invalidated':
@@ -486,14 +527,201 @@ export class Game {
   //  POSIZIONAMENTO
   // =====================================================================
 
-  /** Davanti al box più vicino all'uscita della corsia box. */
+  /** Ferma davanti alla propria piazzola dei box. */
   private placeInPits(e: CarEntity): boolean {
-    const pit = this.track.pit;
-    if (!pit || !pit.stalls.length) return false;
-    const st = pit.stalls.reduce((a, b) => (b.s > a.s ? b : a));
-    this.placeAt(e, st.x, st.z, st.heading);
+    if (!e.stall) return false;
+    this.placeAt(e, e.stall.x, e.stall.z, e.stall.heading);
     return true;
   }
+
+  // =====================================================================
+  //  STRATEGIA: carburante, piazzole, pit stop, radio
+  // =====================================================================
+
+  /** Consumo stimato al giro (kg) per un'auto: misurato se disponibile, altrimenti stimato. */
+  private fuelPerLapOf(e: CarEntity): number {
+    return e.fuelPerLap ?? (this.track.length / 1000) * FUEL_PER_KM_EST * this.sessionCfg.fuelMultiplier;
+  }
+
+  /** Inizio sessione: moltiplicatori, piazzole, carburante (i bot decidono quanto caricarne). */
+  private prepareStrategy(): void {
+    const cfg = this.sessionCfg;
+    const pit = this.track.pit;
+    // piazzole: il pilota quella più vicina all'uscita, poi i bot
+    const stalls = pit ? [...pit.stalls].sort((a, b) => b.s - a.s) : [];
+    this.entities.forEach((e, k) => {
+      e.vehicle.env.wearMultiplier = cfg.wearMultiplier;
+      e.vehicle.env.fuelMultiplier = cfg.fuelMultiplier;
+      e.stall = stalls.length ? stalls[k % stalls.length] : null;
+      e.pit = null;
+      e.pitRequest = null;
+      e.pitStops = 0;
+      e.vehicle.fuelUsed = 0;
+      e.fuelAtLine = 0;
+      e.fuelPerLap = null;
+      e.vehicle.speedLimiter = 0;
+      const cap = e.vehicle.car.fuelCapacity;
+      if (e.isPlayer) e.vehicle.fuel = Math.min(cap, e.vehicle.car.fuelKg);
+      else if (this.session.isRace) {
+        // il bot carica la benzina per tutta la gara più un giro di margine (se ci sta nel serbatoio)
+        e.vehicle.fuel = Math.min(cap, (cfg.laps + 1.3) * this.fuelPerLapOf(e));
+      } else e.vehicle.fuel = Math.min(cap, e.vehicle.car.fuelKg);
+    });
+    this.radioSaid.clear();
+    this.pitPlan.compound = this.car.setup.compound;
+  }
+
+  /** Il pilota è entrato nella corsia box? (all'inizio della corsia, uscendo dalla pista) */
+  private detectPitEntry(e: CarEntity): boolean {
+    const pit = this.track.pit;
+    if (!pit || !e.stall || this.session.state === 'semaforo') return false;
+    const q = pit.project(e.vehicle.x, e.vehicle.z);
+    if (q.s < 0 || q.s > Math.min(pit.limiterStart, 60) || Math.abs(q.d) > pit.data.width / 2) return false;
+    // deve andare nel verso della corsia e trovarsi fuori dalla carreggiata della pista
+    const smp = pit.atS(q.s);
+    const dir = Math.sin(e.vehicle.yaw) * smp.tx + Math.cos(e.vehicle.yaw) * smp.tz;
+    const halfTrack = this.track.at(e.hint).width / 2;
+    return dir > 0.6 && Math.abs(e.d) > halfTrack - 0.5;
+  }
+
+  /** Avvia il pilota automatico dei box per un'auto con il suo piano di sosta. */
+  private startPit(e: CarEntity, plan: PitPlan): void {
+    e.pit = new PitController(this.track.pit!, e.stall!, e.vehicle, plan, (p) => this.doService(e, p));
+    e.pitRequest = null;
+    if (e.isPlayer) {
+      const parts = [
+        plan.changeTyres ? `gomme ${this.car.tire.compounds[plan.compound]?.name ?? plan.compound}` : 'niente gomme',
+        plan.addFuel > 0 ? `+${plan.addFuel.toFixed(0)} kg di benzina` : 'niente benzina',
+      ];
+      this.radio(`Box, box! Piano: ${parts.join(', ')} · sosta ~${serviceTime(plan).toFixed(0)} s`);
+    } else if (this.session.isRace) {
+      this.radio(`${e.name} è entrato ai box.`, 4);
+    }
+  }
+
+  /** Lavoro dei meccanici a fine sosta. */
+  private doService(e: CarEntity, plan: PitPlan): void {
+    const v = e.vehicle;
+    v.fuel = Math.min(v.car.fuelCapacity, v.fuel + plan.addFuel);
+    if (plan.changeTyres) {
+      const s = v.car.setup;
+      const start = this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3;
+      v.fitTyres(plan.compound || s.compound, s.pressureFront, s.pressureRear, start);
+    }
+    e.pitStops++;
+    if (e.isPlayer) {
+      this.radio("Via, via, via! Attento all'uscita dei box.", 3);
+      this.pitPlan.addFuel = 0;
+    }
+  }
+
+  /** Al passaggio sul traguardo: consumo medio, strategia dei bot, radio per il pilota. */
+  private onLapLine(e: CarEntity): void {
+    const used = e.vehicle.fuelUsed - e.fuelAtLine;
+    e.fuelAtLine = e.vehicle.fuelUsed;
+    if (used > 0.05 && !e.pit) e.fuelPerLap = e.fuelPerLap === null ? used : e.fuelPerLap * 0.6 + used * 0.4;
+    const s = this.session;
+    const lapsLeft = s.isRace ? s.config.laps - e.competitor.lapsDone : 99;
+    if (!e.isPlayer) {
+      if (!s.isRace || !this.track.pit || e.pit || e.pitRequest || lapsLeft <= 0) return;
+      const perLap = this.fuelPerLapOf(e);
+      const tread = Math.min(...e.vehicle.tires.map((t) => t.tread));
+      // l'ingresso box è a fine giro: la sosta va chiesta finché la benzina basta per arrivarci con margine
+      const lowFuel = e.vehicle.fuel < (lapsLeft + 0.25) * perLap;
+      const wornOut = tread < 0.28 && lapsLeft > 2;
+      if (lowFuel || wornOut) {
+        e.pitRequest = {
+          changeTyres: tread < 0.6,
+          compound: e.vehicle.car.setup.compound,
+          addFuel: Math.max(0, Math.min(e.vehicle.car.fuelCapacity, (lapsLeft + 1) * perLap) - e.vehicle.fuel),
+        };
+      }
+      return;
+    }
+    this.playerRadioLap(e, lapsLeft);
+  }
+
+  /** Comunicazioni dal box al pilota a ogni giro. */
+  private playerRadioLap(e: CarEntity, lapsLeft: number): void {
+    const s = this.session;
+    const v = e.vehicle;
+    const perLap = this.fuelPerLapOf(e);
+    const fuelLaps = v.fuel / perLap;
+    const tread = Math.min(...v.tires.map((t) => t.tread));
+    const msgs: string[] = [];
+    if (s.isRace && s.state === 'corsa') {
+      const st = s.standings();
+      const i = st.indexOf(e.competitor);
+      const ahead = i > 0 ? st[i - 1] : null;
+      const behind = i < st.length - 1 ? st[i + 1] : null;
+      let gaps = `P${i + 1}`;
+      if (ahead) {
+        const t = ahead.timing.timeAtDistance(e.competitor.timing.totalDistance);
+        if (t !== null) gaps += ` · davanti ${ahead.name} a ${(e.competitor.timing.sessionTime - t).toFixed(1)} s`;
+      }
+      if (behind) {
+        const t = e.competitor.timing.timeAtDistance(behind.timing.totalDistance);
+        if (t !== null) gaps += ` · dietro ${behind.name} a ${(behind.timing.sessionTime - t).toFixed(1)} s`;
+      }
+      msgs.push(gaps);
+      if (this.track.pit && fuelLaps < lapsLeft - 0.2) {
+        const need = Math.max(0, (lapsLeft + 0.5) * perLap - v.fuel);
+        msgs.push(`<b>Benzina per ${fuelLaps.toFixed(1)} giri, ne mancano ${lapsLeft}: rientra e aggiungi ~${Math.ceil(need)} kg</b>`);
+        this.pitPlan.addFuel = Math.max(this.pitPlan.addFuel, Math.ceil(need));
+      }
+    }
+    if (tread < 0.3 && !this.radioSaid.has('gomme30')) {
+      this.radioSaid.add('gomme30');
+      msgs.push('<b>Gomme quasi finite (sotto il 30%): valuta il pit stop.</b>');
+    } else if (tread < 0.55 && !this.radioSaid.has('gomme55')) {
+      this.radioSaid.add('gomme55');
+      msgs.push('Gomme a metà vita.');
+    }
+    if (!s.isRace || s.state !== 'corsa') msgs.push(`Benzina: ${v.fuel.toFixed(1)} kg (~${Math.floor(fuelLaps)} giri)`);
+    if (msgs.length) this.radio(msgs.join('<br>'), 6);
+  }
+
+  /** Messaggio radio del box (in basso a sinistra). */
+  private radio(html: string, seconds = 5): void {
+    this.hud?.radio(`<b>📻 Box:</b> ${html}`, seconds);
+  }
+
+  /** Apre il menu assetto. */
+  private async openSetup(): Promise<void> {
+    const wasPaused = this.loop.paused;
+    this.loop.paused = true;
+    const { SetupMenu } = await import('../strategy/SetupMenu');
+    new SetupMenu(this.car, this.baseCar, this.setupValues, this.playerEntity?.fuelPerLap ?? null, (s) => {
+      this.setupValues = s;
+      applySetup(this.car, this.baseCar, s);
+      saveSetup(this.track.data.id, this.car.id, s);
+      this.pitPlan.compound = s.compound;
+      this.hud?.message('Assetto salvato. Gomme e benzina dalla prossima partenza o sosta.', 3);
+    }, () => { this.loop.paused = wasPaused; }).open();
+  }
+
+  /** Piano del prossimo pit stop (dal menu di pausa). */
+  private openPitPlan(): void {
+    const plan = this.pitPlan;
+    const compounds = Object.entries(this.car.tire.compounds);
+    const html = `
+      <p>Il pit stop parte entrando nella corsia box: il resto lo fa la squadra.</p>
+      <div class="form">
+        <label><input type="checkbox" data-p="tyres" ${plan.changeTyres ? 'checked' : ''}> Cambia le gomme</label>
+        <label>Mescola <select data-p="compound">${compounds.map(([id, c]) => `<option value="${id}" ${plan.compound === id ? 'selected' : ''}>${c.name}</option>`).join('')}</select></label>
+        <label>Benzina da aggiungere (kg) <input type="number" min="0" max="${this.car.fuelCapacity}" step="1" value="${plan.addFuel}" data-p="fuel"></label>
+        <p class="small">A bordo: ${this.vehicle.fuel.toFixed(1)} kg · consumo ~${this.fuelPerLapOf(this.playerEntity).toFixed(2)} kg/giro · durata sosta stimata ~${serviceTime(plan).toFixed(0)} s</p>
+      </div>`;
+    this.overlay.showResults('🛞 Strategia box', html, [{ label: 'OK, riprendi', primary: true, act: () => this.togglePause() }]);
+    document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-p]').forEach((el) =>
+      el.addEventListener('change', () => {
+        if (el.dataset.p === 'tyres') plan.changeTyres = (el as HTMLInputElement).checked;
+        else if (el.dataset.p === 'compound') plan.compound = el.value;
+        else plan.addFuel = Math.max(0, Math.min(this.car.fuelCapacity, parseFloat(el.value) || 0));
+      }),
+    );
+  }
+
 
   /** Ferma sulla linea centrale alla distanza s. */
   private placeOnTrack(e: CarEntity, s: number): void {
@@ -534,7 +762,10 @@ export class Game {
   private applySimTo(v: Vehicle): void {
     v.env.airTemp = this.sim.airTemp;
     v.env.trackTemp = this.sim.trackTemp;
-    v.env.wearMultiplier = this.sim.wearMultiplier;
+    if (this.sessionCfg) {
+      v.env.wearMultiplier = this.sessionCfg.wearMultiplier;
+      v.env.fuelMultiplier = this.sessionCfg.fuelMultiplier;
+    }
   }
 
   /** Condizioni ambientali → fisica delle gomme di tutte le auto. */
@@ -593,7 +824,24 @@ export class Game {
     // ---- 1) comandi e fisica di ogni auto ----
     this.entities.forEach((e, k) => {
       let input: DriverInput;
-      if (e.isPlayer) {
+      // ---- corsia box: ingresso (pilota o bot con sosta richiesta) e pilota automatico ----
+      if (!e.pit && !finished && this.track.pit && e.stall) {
+        if (e.isPlayer && this.detectPitEntry(e)) this.startPit(e, { ...this.pitPlan });
+        else if (!e.isPlayer && e.pitRequest) {
+          let toEntry = this.pitEntryS - e.s;
+          if (toEntry < 0) toEntry += L;
+          if (toEntry < 45) this.startPit(e, e.pitRequest);
+        }
+      }
+      const pitInput = e.pit ? e.pit.drive(dt) : null;
+      if (e.pit && !pitInput) e.pit = null;
+      if (pitInput) {
+        input = pitInput;
+        if (e.isPlayer) {
+          this.input.read(dt, e.vehicle.speed, false); // consuma i comandi (la squadra guida per te)
+          this.lastSteer = input.steer;
+        }
+      } else if (e.isPlayer) {
         // a sessione finita il pilota non guida più (l'auto rallenta da sola)
         input = finished ? { ...emptyInput(), brake: 0.3 } : this.input.read(dt, e.vehicle.speed, this.aids.keyboardSteerAssist);
         this.lastSteer = input.steer;
@@ -626,10 +874,15 @@ export class Game {
       e.s = p.s;
       e.d = p.d;
       const allOff = e.vehicle.surfaces.every((s) => s.name === 'erba');
-      e.competitor.timing.update(dt, p.s, allOff);
+      if (!e.competitor.finished) e.competitor.timing.update(dt, p.s, allOff);
       if (e.isPlayer) {
         if (Math.abs(p.d) > 120) this.resetToTrack(e); // rete di sicurezza
-      } else if (!hold && (Math.abs(p.d) > 35 || e.bot!.stuckTime > 4)) {
+      } else if (e.competitor.retired) {
+        // ritirato: resta dov'è
+      } else if (e.vehicle.fuel <= 0 && e.vehicle.speed < 1) {
+        e.competitor.retired = true;
+        if (this.session.isRace) this.radio(`${e.name} si è ritirato: senza benzina.`, 4);
+      } else if (!hold && !e.pit && (Math.abs(p.d) > 35 || e.bot!.stuckTime > 4)) {
         // bot finito lontano o bloccato: torna in pista
         this.resetToTrack(e);
         e.bot!.stuckTime = 0;
@@ -741,6 +994,8 @@ export class Game {
         { label: '↻ Ricomincia sessione', act: () => this.startSession(this.sessionCfg) },
         { label: '🏁 Termina e vedi risultati', act: () => this.endSessionEarly() },
         { label: 'Cambia sessione…', act: () => this.showSessionChoice() },
+        { label: '🔧 Assetto', act: () => void this.openSetup() },
+        { label: '🛞 Strategia box', act: () => this.openPitPlan() },
         { label: '🎮 Calibra volante', act: () => void this.openWheelCalibration() },
         ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
         { label: 'Menu principale', act: () => navigate('menu') },
@@ -819,6 +1074,10 @@ export class Game {
       standings: this.session.standings().map((c) => ({ pos: c.position, name: c.name, gap: this.session.gap(c), player: c.isPlayer })),
       lights: this.session.state === 'semaforo' ? this.session.lights : -1,
       flag: this.flags.blue ? 'blu' : this.flags.yellow ? 'gialla' : null,
+      fuel: v.fuel,
+      fuelLaps: v.fuel / this.fuelPerLapOf(this.playerEntity),
+      limiter: v.speedLimiter > 0,
+      pit: this.playerEntity.pit ? { phase: this.playerEntity.pit.phase, left: this.playerEntity.pit.serviceLeft, total: this.playerEntity.pit.serviceTotal } : null,
       draft: this.vehicle.dragFactor < 0.93,
       throttle: v.appliedThrottle,
       brake: v.appliedBrake,

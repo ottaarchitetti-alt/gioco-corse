@@ -62,7 +62,6 @@ export class DebugPanel {
     const fe = this.gui.addFolder('Ambiente e simulazione');
     fe.add(sim, 'airTemp', 5, 40, 1).name('Temp. aria (°C)').onChange(cb.onSimChange);
     fe.add(sim, 'trackTemp', 5, 60, 1).name('Temp. asfalto (°C)').onChange(cb.onSimChange);
-    fe.add(sim, 'wearMultiplier', 0, 10, 0.5).name('Moltiplicatore usura').onChange(cb.onSimChange);
     fe.add(sim, 'tyreBlankets').name('Termocoperte').onChange(cb.onSimChange);
 
     // ---- Sospensioni ----

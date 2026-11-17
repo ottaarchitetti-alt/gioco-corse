@@ -86,6 +86,8 @@
   "aeroBalanceFront": 0.42,
 
   "fuelKg": 60,
+  "fuelCapacity": 110,
+  "engineEfficiency": 0.3,
 
   "setup": {
     "compound": "media",

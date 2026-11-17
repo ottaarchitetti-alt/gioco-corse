@@ -154,3 +154,20 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-flag .f { display: inline-block; width: 22px; height: 15px; border-radius: 2px; }
 .hud-flag .f.gialla { background: #ffd400; }
 .hud-flag .f.blu { background: #2a63d4; }
+
+/* Menu assetto */
+.setup-menu { z-index: 35; }
+.overlay .card.wide { max-width: 760px; }
+.setup-menu .srow { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 8px 0 12px; }
+.setup-menu .srow label { display: flex; justify-content: space-between; color: #c6ced8; font-size: 14px; }
+.setup-menu .srow input[type=range] { width: 100%; }
+.setup-menu .srow small { color: var(--hud-dim); font-size: 12px; }
+
+/* Radio dal box, carburante, limitatore */
+.hud-radio { bottom: 125px; left: 16px; max-width: 360px; font-size: 13px; line-height: 1.45; display: none; border-left: 3px solid var(--accent); }
+.hud-radio b { color: var(--accent); }
+.hud-tyres .fuel { font-size: 11px; color: var(--hud-fg); text-align: center; margin-top: 6px; }
+.hud-tyres .fuel.low { color: var(--bad); font-weight: 700; }
+.hud-dash .aids span.lim { background: #2a63d4; color: #fff; }
+.hud-pit { top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; text-align: center; display: none; padding: 14px 24px; }
+.hud-pit .big { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }

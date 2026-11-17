@@ -73,6 +73,8 @@ export interface TireEnvironment {
   trackTemp: number;
   /** Moltiplicatore dell'usura (D9: per gare brevi con strategia) */
   wearMultiplier: number;
+  /** Moltiplicatore del consumo di carburante */
+  fuelMultiplier: number;
 }
 
 export class Tire {

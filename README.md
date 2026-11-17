@@ -16,7 +16,21 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 6 completata
+## Stato: Fase 7 completata
+- Menu ASSETTO (da scelta sessione o pausa), salvato per pista: ali, rapporto finale,
+  differenziale, molle, barre, ammortizzatori, freni, pressioni, mescola, carburante
+- Carburante per auto: consumo dalla potenza erogata (~0,76 kg/giro sull'Anello),
+  peso che cala, motore che si spegne a secco (i bot a secco si ritirano)
+- Corsia box con limitatore e pilota automatico: entri in corsia e la squadra ti porta
+  alla piazzola; sosta = 4 s + max(cambio gomme 13 s, rifornimento 2,5 kg/s);
+  "Strategia box" nel menu di pausa (gomme sì/no, mescola, kg da aggiungere)
+- In prova/qualifica si esce dai box con il limitatore
+- Strategia dei bot: benzina per la gara, sosta quando servono benzina o gomme
+- Radio dal box: posizione e distacchi a ogni giro, avvisi gomme/benzina, soste avversari
+- Moltiplicatori usura gomme e consumo nella scelta della sessione (Strategia)
+- L'Anello di prova ora ha corsia box, muretto, tribuna e barriere
+
+## Fase 6
 - Scia aerodinamica: dietro un'altra auto meno resistenza (più velocità) e meno
   deportanza (meno aderenza in curva); HUD "In scia"
 - Bot in corpo a corpo: sorpasso dal lato con più spazio (preferendo l'interno),

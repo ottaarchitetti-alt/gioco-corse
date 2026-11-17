@@ -19,7 +19,7 @@
  * Sottosterzo e sovrasterzo NON sono programmati: emergono da come carico e
  * aderenza si distribuiscono tra anteriore e posteriore.
  */
-import { clamp, damp, RAD } from '../core/math';
+import { clamp, damp, RAD, RPM_TO_RADS } from '../core/math';
 import type { DriverInput } from '../input/InputManager';
 import { downforce, dragForce } from './Aero';
 import type { CarParams } from './CarParams';
@@ -108,7 +108,14 @@ export class Vehicle {
   downforceFactor = 1;
 
   /** Condizioni ambientali (aria, asfalto, moltiplicatore usura): le imposta Game. */
-  env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1 };
+  env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1, fuelMultiplier: 1 };
+
+  /** Carburante a bordo (kg): ogni auto ha il suo (il peso cala mentre consuma) */
+  fuel: number;
+  /** Carburante consumato dall'inizio (kg), per stimare il consumo al giro */
+  fuelUsed = 0;
+  /** Limitatore di velocità della corsia box (m/s), 0 = spento */
+  speedLimiter = 0;
 
   private tcCut = 0;
   private loads = [0, 0, 0, 0];
@@ -116,6 +123,7 @@ export class Vehicle {
   constructor(public car: CarParams, private groundQuery: GroundQuery) {
     this.tires = [0, 1, 2, 3].map(() => new Tire(car.tire, car.setup.compound));
     this.drivetrain = new Drivetrain(car);
+    this.fuel = car.fuelKg;
     this.cgToFront = car.wheelbase * (1 - car.weightFront);
     this.cgToRear = car.wheelbase * car.weightFront;
     const tf = car.trackFront / 2, tr = car.trackRear / 2;
@@ -132,7 +140,7 @@ export class Vehicle {
   }
 
   get totalMass(): number {
-    return this.car.mass + this.car.fuelKg;
+    return this.car.mass + this.fuel;
   }
 
   /** Riporta l'auto ferma in una posizione (gomme: temperatura e usura restano). */
@@ -198,12 +206,23 @@ export class Vehicle {
     else this.tcCut = Math.max(0, this.tcCut - dt * 4);
     this.tcActive = this.tcCut > 0.05;
     throttle *= 1 - this.tcCut * 0.85;
+    // serbatoio vuoto: il motore si spegne
+    if (this.fuel <= 0) throttle = 0;
+    // limitatore box: taglia il gas sopra la velocità consentita
+    if (this.speedLimiter > 0 && this.speed > this.speedLimiter - 0.3) throttle = Math.min(throttle, Math.max(0, (this.speedLimiter - this.speed) * 0.5));
     this.appliedThrottle = throttle;
 
     // ---------- Motore e trasmissione ----------
     const drive = this.drivetrain.update(
       dt, throttle, input.brake, this.tires[RL].omega, this.tires[RR].omega, this.speed, aids.autoShift,
     );
+
+    // ---------- Consumo di carburante ----------
+    // energia meccanica prodotta dal motore / (rendimento × potere calorifico 43 MJ/kg), più il minimo
+    const power = Math.max(0, this.drivetrain.engineTorque) * this.drivetrain.rpm * RPM_TO_RADS;
+    const burn = (power / (car.engineEfficiency * 43e6) + 0.0004) * this.env.fuelMultiplier * dt;
+    this.fuel = Math.max(0, this.fuel - burn);
+    this.fuelUsed += burn;
 
     // ---------- Forze delle gomme ----------
     let fLong = 0, fLat = 0, mz = 0;

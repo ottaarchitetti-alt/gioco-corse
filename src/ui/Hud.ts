@@ -48,6 +48,13 @@ export interface HudData {
   flag: 'gialla' | 'blu' | null;
   /** Sei nella scia di un'altra auto */
   draft: boolean;
+  /** Carburante a bordo (kg) e giri stimati */
+  fuel: number;
+  fuelLaps: number;
+  /** Limitatore della corsia box attivo */
+  limiter: boolean;
+  /** Pit stop in corso */
+  pit: { phase: string; left: number; total: number } | null;
   throttle: number;
   brake: number;
   steer: number;
@@ -96,6 +103,9 @@ export class Hud {
   private startLights: HTMLDivElement;
   readonly lapList: HTMLDivElement;
   private flag: HTMLDivElement;
+  private radioEl: HTMLDivElement;
+  private radioTimer = 0;
+  private pitEl: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     this.laps = h('hud-panel hud-laps');
@@ -106,7 +116,7 @@ export class Hud {
         <div class="gear mono">N</div>
       </div>
       <div class="rpm mono">0 giri/min</div>
-      <div class="aids"><span data-a="abs">ABS</span><span data-a="tc">TC</span><span data-a="auto">AUTO</span></div>`);
+      <div class="aids"><span data-a="abs">ABS</span><span data-a="tc">TC</span><span data-a="auto">AUTO</span><span class="lim">LIMITATORE BOX</span></div>`);
     this.inputs = h('hud-panel hud-inputs', `
       <div class="bar brk"><i></i></div><div class="bar thr"><i></i></div><div class="steer"><i></i></div>`);
     this.info = h('hud-panel hud-info');
@@ -116,8 +126,10 @@ export class Hud {
     this.startLights = h('hud-panel hud-lights', '<span></span>'.repeat(5));
     this.lapList = h('hud-panel hud-laplist mono');
     this.flag = h('hud-panel hud-flag');
-    this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div>`);
-    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    this.radioEl = h('hud-panel hud-radio');
+    this.pitEl = h('hud-panel hud-pit');
+    this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div><div class="fuel mono"></div>`);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.radioEl, this.pitEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -126,6 +138,13 @@ export class Hud {
     this.msg.textContent = text;
     this.msg.classList.add('show');
     this.msgTimer = seconds;
+  }
+
+  /** Messaggio radio dal box (resta qualche secondo). */
+  radio(html: string, seconds = 5): void {
+    this.radioEl.innerHTML = html;
+    this.radioEl.style.display = 'block';
+    this.radioTimer = seconds;
   }
 
   /** Toglie subito il messaggio a schermo. */
@@ -139,6 +158,19 @@ export class Hud {
       this.msgTimer -= frameDt;
       if (this.msgTimer <= 0) this.msg.classList.remove('show');
     }
+
+    if (this.radioTimer > 0) {
+      this.radioTimer -= frameDt;
+      if (this.radioTimer <= 0) this.radioEl.style.display = 'none';
+    }
+    // pit stop
+    if (d.pit) {
+      const txt = d.pit.phase === 'sosta'
+        ? `🛠 SOSTA AI BOX<div class="big">${Math.max(0, d.pit.left).toFixed(1)} s</div>`
+        : d.pit.phase === 'uscita' ? '🚦 Uscita dai box · limitatore' : '🅿 Corsia box · la squadra ti porta alla piazzola';
+      this.pitEl.innerHTML = txt;
+      this.pitEl.style.display = 'block';
+    } else this.pitEl.style.display = 'none';
 
     this.renderTiming(d.timing);
     this.renderStandings(d.standings);
@@ -169,6 +201,10 @@ export class Hud {
     aids[1].style.display = d.tc ? '' : 'none';
     aids[1].classList.toggle('on', d.tcActive);
     aids[2].style.display = d.autoShift ? '' : 'none';
+    aids[3].style.display = d.limiter ? '' : 'none';
+    const fuelEl = this.tyres.querySelector('.fuel') as HTMLElement;
+    fuelEl.textContent = `⛽ ${d.fuel.toFixed(1)} kg · ~${isFinite(d.fuelLaps) ? Math.floor(d.fuelLaps) : '–'} giri`;
+    fuelEl.classList.toggle('low', d.fuelLaps < 2);
 
     (this.inputs.querySelector('.thr i') as HTMLElement).style.height = `${d.throttle * 100}%`;
     (this.inputs.querySelector('.brk i') as HTMLElement).style.height = `${d.brake * 100}%`;

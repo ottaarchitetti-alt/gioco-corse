@@ -28,6 +28,9 @@ export interface SessionConfig {
   difficulty: Difficulty;
   /** Posizione di partenza del pilota in gara */
   grid: GridMode;
+  /** Moltiplicatori di usura gomme e consumo carburante (1 = realistico): per gare brevi con strategia */
+  wearMultiplier: number;
+  fuelMultiplier: number;
 }
 
 export type GridMode = 'qualifica' | 'pole' | 'meta' | 'fondo';
@@ -54,6 +57,8 @@ export class Competitor {
   finishTime: number | null = null;
   /** Penalità di tempo accumulate (s) */
   penalty = 0;
+  /** Ritirato (es. senza benzina): non viene classificato */
+  retired = false;
   position = 1;
 
   constructor(
@@ -171,7 +176,7 @@ export class Session {
 
     // Fine sessione: quando tutti hanno finito (o 2 minuti dopo la bandiera)
     if (this.state === 'bandiera') {
-      if (this.competitors.every((c) => c.finished) || this.clock - this.flagTime > 120) {
+      if (this.competitors.every((c) => c.finished || c.retired) || this.clock - this.flagTime > 120) {
         this.state = 'finita';
         this.onEvent({ type: 'end' });
       }
@@ -207,6 +212,7 @@ export class Session {
       list.sort((a, b) => {
         if (a.finished && b.finished) return a.finishTime! + a.penalty - (b.finishTime! + b.penalty);
         if (a.finished !== b.finished) return a.finished ? -1 : 1;
+        if (a.retired !== b.retired) return a.retired ? 1 : -1;
         return b.timing.totalDistance - a.timing.totalDistance;
       });
     } else {
@@ -226,6 +232,7 @@ export class Session {
   gap(c: Competitor, toLeader = true): string {
     const st = this.standings();
     const i = st.indexOf(c);
+    if (c.retired) return 'Ritirato';
     if (i <= 0) return this.isRace ? 'Leader' : c.timing.best ? '' : '–';
     const ref = toLeader ? st[0] : st[i - 1];
     if (this.isRace) {

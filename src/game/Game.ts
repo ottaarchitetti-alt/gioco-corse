@@ -9,7 +9,8 @@ import { formatLapTime, MS_TO_KMH } from '../core/math';
 import { loadJSON, saveJSON } from '../core/storage';
 import { InputManager } from '../input/InputManager';
 import { loadCar, type CarParams } from '../physics/CarParams';
-import { Vehicle, type DrivingAids, type Surface } from '../physics/Vehicle';
+import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../physics/Vehicle';
+import { TelemetryGraph } from '../ui/TelemetryGraph';
 import { LapTimer } from '../race/LapTimer';
 import { loadCarRig } from '../render/AssetManager';
 import { CameraRig } from '../render/CameraRig';
@@ -18,7 +19,7 @@ import { Renderer } from '../render/Renderer';
 import { loadTrack } from '../track/TrackData';
 import { buildTrackMesh } from '../track/TrackMeshBuilder';
 import { KERB_WIDTH, TrackSpline } from '../track/TrackSpline';
-import { DebugPanel } from '../ui/DebugPanel';
+import { DebugPanel, type SimSettings } from '../ui/DebugPanel';
 import { Hud } from '../ui/Hud';
 import { Overlay } from '../ui/Overlay';
 
@@ -33,12 +34,17 @@ const SURFACES: Record<Surface['name'], Surface> = {
 };
 
 const DEFAULT_AIDS: DrivingAids = { abs: true, tc: true, autoShift: true, keyboardSteerAssist: true };
+const DEFAULT_SIM: SimSettings = { airTemp: 22, trackTemp: 32, wearMultiplier: 1, tyreBlankets: false };
+/** Temperatura delle gomme montate con le termocoperte (°C) */
+const BLANKET_TEMP = 80;
 
 export class Game {
   private renderer!: Renderer;
   private input = new InputManager();
   private sound = new EngineSound();
   private aids: DrivingAids = loadJSON('aids', DEFAULT_AIDS);
+  private sim: SimSettings = loadJSON('sim', DEFAULT_SIM);
+  private graph!: TelemetryGraph;
   private car!: CarParams;
   private track!: TrackSpline;
   private vehicle!: Vehicle;
@@ -84,7 +90,9 @@ export class Game {
     this.renderer.scene.add(buildTrackMesh(this.track, this.renderer.maxAnisotropy));
 
     // ---- Fisica ----
-    this.vehicle = new Vehicle(car, (i, x, z) => this.surfaceAt(i, x, z));
+    this.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(i, x, z));
+    this.applySim();
+    this.fitNewTyres();
     this.placeOnTrack(this.track.length - 30);
 
     // ---- Vista, HUD, cronometro ----
@@ -98,7 +106,18 @@ export class Game {
         this.hud.message(e.best ? `Nuovo record! ${txt}` : e.valid ? `Giro: ${txt}` : `Giro (non valido): ${txt}`, 3);
       }
     });
-    this.debug = new DebugPanel(car, this.aids, () => saveJSON('aids', this.aids), this.input, this.sound);
+    this.graph = new TelemetryGraph(this.uiEl);
+    this.debug = new DebugPanel(car, this.aids, this.sim, {
+      onAidsChange: () => saveJSON('aids', this.aids),
+      onSimChange: () => {
+        saveJSON('sim', this.sim);
+        this.applySim();
+      },
+      onNewTyres: () => {
+        this.fitNewTyres();
+        this.hud.message(`Gomme nuove: ${this.vehicle.tires[0].compound.name}`, 2);
+      },
+    }, this.input, this.sound);
 
     // ---- Loop ----
     this.loop = new GameLoop({
@@ -115,16 +134,38 @@ export class Game {
     });
   }
 
-  /** Superficie sotto una ruota: asfalto, cordolo o erba, in base alla distanza dal centro pista. */
-  private surfaceAt(i: number, x: number, z: number): Surface {
+  /** Condizioni ambientali → fisica delle gomme. */
+  private applySim(): void {
+    this.vehicle.env.airTemp = this.sim.airTemp;
+    this.vehicle.env.trackTemp = this.sim.trackTemp;
+    this.vehicle.env.wearMultiplier = this.sim.wearMultiplier;
+  }
+
+  /** Monta gomme nuove secondo l'assetto (mescola e pressioni a freddo). */
+  private fitNewTyres(): void {
+    const s = this.car.setup;
+    const start = this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3;
+    this.vehicle.fitTyres(s.compound, s.pressureFront, s.pressureRear, start);
+  }
+
+  /**
+   * Cosa c'è sotto una ruota: asfalto, cordolo o erba (dalla distanza dal centro pista)
+   * e l'altezza del suolo: i cordoli sono rialzati e "a dente", l'erba è irregolare.
+   */
+  private groundAt(i: number, x: number, z: number): GroundContact {
     const p = this.track.project(x, z, this.wheelHints[i]);
     this.wheelHints[i] = p.index;
     const half = p.sample.width / 2;
     const ad = Math.abs(p.d);
-    if (ad <= half) return SURFACES.asfalto;
+    if (ad <= half) return { surface: SURFACES.asfalto, height: 0 };
     const hasKerb = p.d > 0 ? p.sample.kerbLeft : p.sample.kerbRight;
-    if (hasKerb && ad <= half + KERB_WIDTH) return SURFACES.cordolo;
-    return SURFACES.erba;
+    if (hasKerb && ad <= half + KERB_WIDTH) {
+      const rise = Math.min(1, (ad - half) / 0.4); // il cordolo sale nei primi 40 cm
+      const teeth = Math.abs(Math.sin((Math.PI * p.s) / 1.2)); // dentini ogni 1,2 m
+      return { surface: SURFACES.cordolo, height: 0.022 * rise + 0.004 * teeth * rise };
+    }
+    const bumps = 0.012 * (Math.sin(p.s * 0.9) + Math.sin(p.d * 1.7 + p.s * 0.31)) * 0.5;
+    return { surface: SURFACES.erba, height: bumps };
   }
 
   /** Mette l'auto ferma sulla linea centrale alla distanza s. */
@@ -176,6 +217,9 @@ export class Game {
           break;
         case 'telemetry':
           this.hud.telemetry.classList.toggle('show');
+          break;
+        case 'graphs':
+          this.graph.setVisible(!this.graph.visible);
           break;
         case 'mute':
           this.hud.message(this.sound.toggleMute() ? 'Audio disattivato' : 'Audio attivo', 1);
@@ -230,7 +274,18 @@ export class Game {
       device: this.input.device,
       trackName: this.track.data.name,
       carName: this.car.name,
+      compound: v.tires[0].compound.name,
+      tyres: v.tires.map((t) => ({
+        temp: t.surfaceTemp, core: t.coreTemp, pressure: t.pressure,
+        tread: t.tread, grip: t.gripFactor, optimal: t.compound.optimalTemp,
+      })),
     }, frameDt);
+
+    const avgT = (a: number, b: number) => (v.tires[a].effectiveTemp + v.tires[b].effectiveTemp) / 2;
+    this.graph.push(frameDt, [
+      v.speed * MS_TO_KMH, v.appliedThrottle, v.appliedBrake, this.lastSteer,
+      v.aLatSmooth / 9.81, avgT(0, 1), avgT(2, 3),
+    ]);
 
     const maxSlip = Math.max(...v.tires.map((t) => t.combinedSlip));
     this.sound.update(dt.rpm, v.appliedThrottle, maxSlip, v.speed, dt.rpm >= this.car.maxRpm * 0.995);
@@ -256,8 +311,16 @@ export class Game {
       `${'Deriva (°)'.padEnd(14)}${col(t.map((x) => ((Math.atan(x.tanAlpha) * 180) / Math.PI).toFixed(1)))}`,
       `${'Al limite'.padEnd(14)}${col(t.map((x) => (x.combinedSlip * 100).toFixed(0) + '%'))}`,
       `${'Superficie'.padEnd(14)}${col(v.surfaces.map((s) => s.name))}`,
+      `${'T sup. °C'.padEnd(14)}${col(t.map((x) => x.surfaceTemp.toFixed(0)))}`,
+      `${'T carcassa °C'.padEnd(14)}${col(t.map((x) => x.coreTemp.toFixed(0)))}`,
+      `${'Pressione bar'.padEnd(14)}${col(t.map((x) => x.pressure.toFixed(2)))}`,
+      `${'Battistrada %'.padEnd(14)}${col(t.map((x) => (x.tread * 100).toFixed(1)))}`,
+      `${'Aderenza %'.padEnd(14)}${col(t.map((x) => (x.gripFactor * 100).toFixed(1)))}`,
+      `${'Compress. mm'.padEnd(14)}${col(v.suspension.compression.map((c) => (c * 1000).toFixed(1)))}`,
       ``,
-      `Acc. long ${(v.aLong / g).toFixed(2)} g   lat ${(v.aLat / g).toFixed(2)} g`,
+      `Acc. long ${(v.aLongSmooth / g).toFixed(2)} g   lat ${(v.aLatSmooth / g).toFixed(2)} g`,
+      `Beccheggio ${((v.suspension.pitch * 180) / Math.PI).toFixed(2)}°   rollio ${((v.suspension.roll * 180) / Math.PI).toFixed(2)}°`,
+      `Differenziale: trasferisce ${v.drivetrain.diffTransfer.toFixed(0)} Nm`,
       `Imbardata ${((v.yawRate * 180) / Math.PI).toFixed(1)} °/s   v.lat ${v.vLat.toFixed(2)} m/s`,
       `Coppia motore ${v.drivetrain.engineTorque.toFixed(0)} Nm${v.drivetrain.clutchSlipping ? '  (frizione)' : ''}`,
       `Pista s ${this.carS.toFixed(0)} / ${this.track.length.toFixed(0)} m   d ${this.carD.toFixed(1)} m`,

@@ -9,7 +9,10 @@ const ui = document.getElementById('ui')!;
 
 const game = new Game(app, ui);
 // Solo in sviluppo: il gioco è ispezionabile dalla console del browser (window.game)
-if (import.meta.env.DEV) (window as unknown as { game: Game }).game = game;
+if (import.meta.env.DEV) {
+  (window as unknown as { game: Game }).game = game;
+  void import('./dev/devTools').then((m) => m.installDevTools(game));
+}
 game.init().catch((err) => {
   console.error(err);
   const box = document.createElement('div');

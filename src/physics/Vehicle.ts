@@ -1,6 +1,7 @@
 /**
  * Il veicolo: corpo rigido che si muove sul piano (pista piatta) con 3 gradi
- * di libertà (x, z, imbardata) più 4 ruote indipendenti.
+ * di libertà (x, z, imbardata), una carrozzeria sospesa (scuotimento,
+ * beccheggio, rollio: vedi Suspension.ts) e 4 ruote indipendenti.
  *
  * SISTEMI DI RIFERIMENTO (uguali a Three.js e alla convenzione dei modelli Blender)
  *   Mondo: Y in alto, la pista sta sul piano XZ.
@@ -8,10 +9,12 @@
  *   yaw:   rotazione attorno a Y; yaw positivo = l'auto gira a SINISTRA.
  *
  * A ogni passo:
- *   1. calcoliamo il carico su ogni ruota (statico + trasferimento + deportanza);
- *   2. il motore/cambio dà la coppia alle ruote posteriori;
- *   3. ogni gomma, dalla sua velocità e dal suo carico, produce forze;
- *   4. sommiamo forze e momenti → accelerazioni → nuove velocità e posizione.
+ *   1. cosa c'è sotto ogni ruota (asfalto/cordolo/erba e altezza);
+ *   2. le sospensioni danno il carico su ogni gomma;
+ *   3. motore e cambio danno la coppia alle ruote posteriori;
+ *   4. ogni gomma, da velocità, carico e temperatura, produce forze;
+ *   5. forze e momenti → accelerazioni → nuove velocità e posizione;
+ *   6. le accelerazioni muovono la carrozzeria sulle sospensioni (trasferimento di carico).
  *
  * Sottosterzo e sovrasterzo NON sono programmati: emergono da come carico e
  * aderenza si distribuiscono tra anteriore e posteriore.
@@ -21,9 +24,8 @@ import type { DriverInput } from '../input/InputManager';
 import { downforce, dragForce } from './Aero';
 import type { CarParams } from './CarParams';
 import { Drivetrain } from './Drivetrain';
-import { Tire } from './Tire';
-
-export const GRAVITY = 9.81;
+import { Suspension } from './Suspension';
+import { Tire, type TireEnvironment } from './Tire';
 
 /** Indici delle ruote */
 export const FL = 0, FR = 1, RL = 2, RR = 3;
@@ -36,7 +38,12 @@ export interface Surface {
   /** Resistenza al rotolamento aggiuntiva (frazione del carico). */
   drag: number;
 }
-export type SurfaceQuery = (wheelIndex: number, x: number, z: number) => Surface;
+/** Cosa trova una ruota a terra: tipo di superficie e altezza del suolo (m). */
+export interface GroundContact {
+  surface: Surface;
+  height: number;
+}
+export type GroundQuery = (wheelIndex: number, x: number, z: number) => GroundContact;
 
 /** Aiuti alla guida (D10: tutti attivabili/disattivabili). */
 export interface DrivingAids {
@@ -64,9 +71,12 @@ export class Vehicle {
   /** Velocità nel riferimento auto: longitudinale (+avanti) e laterale (+sinistra). */
   vLong = 0;
   vLat = 0;
-  /** Accelerazioni filtrate (m/s²) usate per il trasferimento di carico e la grafica. */
+  /** Accelerazioni del passo corrente (m/s²) nel riferimento auto. */
   aLong = 0;
   aLat = 0;
+  /** Accelerazioni filtrate, più leggibili per HUD e telemetria. */
+  aLongSmooth = 0;
+  aLatSmooth = 0;
   /** Angolo di sterzo delle ruote anteriori (rad, + = sinistra). */
   steerAngle = 0;
   /** Angolo del volante in gradi (per la grafica dell'abitacolo). */
@@ -74,23 +84,29 @@ export class Vehicle {
 
   readonly tires: Tire[];
   readonly drivetrain: Drivetrain;
+  readonly suspension: Suspension;
   /** Posizione delle ruote rispetto al baricentro: [laterale(+sx), longitudinale(+avanti)] */
   readonly wheelPos: [number, number][];
   /** Distanza baricentro → asse anteriore / posteriore */
   readonly cgToFront: number;
   readonly cgToRear: number;
-  /** Superficie corrente sotto ogni ruota. */
+  /** Superficie e altezza del suolo sotto ogni ruota. */
   readonly surfaces: Surface[] = [];
+  readonly roadHeight = [0, 0, 0, 0];
   /** Ultimi input applicati (dopo gli aiuti), per HUD e audio. */
   appliedThrottle = 0;
   appliedBrake = 0;
   absActive = false;
   tcActive = false;
 
-  private tcCut = 0;
+  /** Condizioni ambientali (aria, asfalto, moltiplicatore usura): le imposta Game. */
+  env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1 };
 
-  constructor(public car: CarParams, private surfaceQuery: SurfaceQuery) {
-    this.tires = [0, 1, 2, 3].map(() => new Tire(car.tire));
+  private tcCut = 0;
+  private loads = [0, 0, 0, 0];
+
+  constructor(public car: CarParams, private groundQuery: GroundQuery) {
+    this.tires = [0, 1, 2, 3].map(() => new Tire(car.tire, car.setup.compound));
     this.drivetrain = new Drivetrain(car);
     this.cgToFront = car.wheelbase * (1 - car.weightFront);
     this.cgToRear = car.wheelbase * car.weightFront;
@@ -101,23 +117,31 @@ export class Vehicle {
       [tr, -this.cgToRear],
       [-tr, -this.cgToRear],
     ];
+    this.suspension = new Suspension(car, this.wheelPos, this.cgToFront, this.cgToRear);
     const def: Surface = { name: 'asfalto', grip: 1, drag: 0 };
     for (let i = 0; i < 4; i++) this.surfaces.push(def);
+    this.fitTyres(car.setup.compound, car.setup.pressureFront, car.setup.pressureRear, this.env.airTemp);
   }
 
   get totalMass(): number {
     return this.car.mass + this.car.fuelKg;
   }
 
-  /** Riporta l'auto ferma in una posizione. */
+  /** Riporta l'auto ferma in una posizione (gomme: temperatura e usura restano). */
   reset(x: number, z: number, yaw: number): void {
     this.x = this.prevX = x;
     this.z = this.prevZ = z;
     this.yaw = this.prevYaw = yaw;
     this.vx = this.vz = this.yawRate = 0;
-    this.aLong = this.aLat = 0;
-    this.tires.forEach((t) => t.reset());
+    this.aLong = this.aLat = this.aLongSmooth = this.aLatSmooth = 0;
+    this.tires.forEach((t) => t.resetMotion());
+    this.suspension.reset();
     this.drivetrain.reset();
+  }
+
+  /** Monta 4 gomme nuove. */
+  fitTyres(compound: string, pressureFront: number, pressureRear: number, startTemp: number): void {
+    this.tires.forEach((t, i) => t.fitNew(compound, i < 2 ? pressureFront : pressureRear, startTemp, this.env));
   }
 
   /** Avanza la simulazione di `dt` secondi. */
@@ -146,21 +170,17 @@ export class Vehicle {
     if (input.shiftUp) this.drivetrain.shift(1, avgRearOmega, this.speed);
     if (input.shiftDown) this.drivetrain.shift(-1, avgRearOmega, this.speed);
 
-    // ---------- Carichi verticali ----------
-    const L = car.wheelbase;
-    const aero = downforce(car, Math.max(0, this.vLong));
-    let front = (m * GRAVITY * this.cgToRear) / L + aero.front;
-    let rear = (m * GRAVITY * this.cgToFront) / L + aero.rear;
-    const longTransfer = (m * this.aLong * car.cgHeight) / L; // accelerando il peso va dietro
-    front -= longTransfer;
-    rear += longTransfer;
-    const latTotal = m * this.aLat * car.cgHeight; // curvando a sinistra il peso va a destra
-    const latFront = (latTotal * car.rollStiffnessFront) / car.trackFront;
-    const latRear = (latTotal * (1 - car.rollStiffnessFront)) / car.trackRear;
-    this.tires[FL].load = Math.max(0, front / 2 - latFront);
-    this.tires[FR].load = Math.max(0, front / 2 + latFront);
-    this.tires[RL].load = Math.max(0, rear / 2 - latRear);
-    this.tires[RR].load = Math.max(0, rear / 2 + latRear);
+    // ---------- Cosa c'è sotto le ruote ----------
+    for (let i = 0; i < 4; i++) {
+      const [pLat, pLong] = this.wheelPos[i];
+      const g = this.groundQuery(i, this.x + fwdX * pLong + leftX * pLat, this.z + fwdZ * pLong + leftZ * pLat);
+      this.surfaces[i] = g.surface;
+      this.roadHeight[i] = g.height;
+    }
+
+    // ---------- Carichi verticali dalle sospensioni ----------
+    this.suspension.wheelLoads(m, this.roadHeight, dt, this.loads);
+    for (let i = 0; i < 4; i++) this.tires[i].load = this.loads[i];
 
     // ---------- Controllo di trazione (aiuto) ----------
     let throttle = input.throttle;
@@ -195,13 +215,8 @@ export class Vehicle {
       const vxw = vcx * cd + vcy * sd;
       const vyw = -vcx * sd + vcy * cd;
 
-      // Superficie sotto la ruota
-      const wx = this.x + fwdX * pLong + leftX * pLat;
-      const wz = this.z + fwdZ * pLong + leftZ * pLat;
-      const surface = this.surfaceQuery(i, wx, wz);
-      this.surfaces[i] = surface;
-
-      const f = tire.computeForces(vxw, vyw, r, surface.grip, dt);
+      const surface = this.surfaces[i];
+      const f = tire.computeForces(vxw, vyw, r, surface.grip, this.env, dt);
       // Resistenza al rotolamento (asfalto + extra della superficie, es. erba)
       const rr = (car.tire.rollingResistance + surface.drag) * tire.load * clamp(vxw, -1, 1);
       const fx = f.fx - rr;
@@ -236,6 +251,7 @@ export class Vehicle {
       fLong -= (drag * this.vLong) / this.speed;
       fLat -= (drag * this.vLat) / this.speed;
     }
+    const aero = downforce(car, Math.max(0, this.vLong));
 
     // ---------- Integrazione (Eulero semi-implicito) ----------
     const axLocal = fLong / m;
@@ -255,9 +271,12 @@ export class Vehicle {
     this.x += this.vx * dt;
     this.z += this.vz * dt;
 
-    // Accelerazioni filtrate: il carico si trasferisce con il ritardo delle sospensioni
-    const k = damp(1 / car.loadTransferLag, dt);
-    this.aLong += (axLocal - this.aLong) * k;
-    this.aLat += (ayLocal - this.aLat) * k;
+    // ---------- Carrozzeria sulle sospensioni ----------
+    this.aLong = axLocal;
+    this.aLat = ayLocal;
+    this.suspension.integrate(m, axLocal, ayLocal, aero.front, aero.rear, dt);
+    const k = damp(8, dt);
+    this.aLongSmooth += (axLocal - this.aLongSmooth) * k;
+    this.aLatSmooth += (ayLocal - this.aLatSmooth) * k;
   }
 }

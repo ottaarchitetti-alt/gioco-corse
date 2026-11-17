@@ -27,6 +27,19 @@ export interface HudData {
   device: string;
   trackName: string;
   carName: string;
+  compound: string;
+  /** Una voce per gomma: ant. sx, ant. dx, post. sx, post. dx */
+  tyres: { temp: number; core: number; pressure: number; tread: number; grip: number; optimal: number }[];
+}
+
+/** Colore della temperatura gomma rispetto all'ideale: blu fredda, verde ok, rosso surriscaldata. */
+function tempColor(t: number, opt: number): string {
+  const d = t - opt;
+  if (d < -35) return '#3b6fd8';
+  if (d < -15) return '#36b5c9';
+  if (d <= 12) return '#3ddc84';
+  if (d <= 25) return '#ffcc00';
+  return '#ff4d4d';
 }
 
 const h = (cls: string, html = ''): HTMLDivElement => {
@@ -43,6 +56,7 @@ export class Hud {
   private info: HTMLDivElement;
   private msg: HTMLDivElement;
   readonly telemetry: HTMLDivElement;
+  private tyres: HTMLDivElement;
   private msgTimer = 0;
   private lights: HTMLSpanElement[] = [];
 
@@ -61,7 +75,8 @@ export class Hud {
     this.info = h('hud-panel hud-info');
     this.msg = h('hud-panel hud-msg');
     this.telemetry = h('hud-panel hud-telemetry mono');
-    root.append(this.laps, this.dash, this.inputs, this.info, this.msg, this.telemetry);
+    this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div>`);
+    root.append(this.laps, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -109,6 +124,21 @@ export class Hud {
     (this.inputs.querySelector('.brk i') as HTMLElement).style.height = `${d.brake * 100}%`;
     (this.inputs.querySelector('.steer i') as HTMLElement).style.left = `${(0.5 - d.steer / 2) * 100 - 2}%`;
 
-    this.info.innerHTML = `${d.trackName} · ${d.carName}<br>Telecamera: ${d.camera} (C) · Input: ${d.device}<br>H = aiuto · P = pausa`;
+    // Gomme: colore = temperatura, numero = °C superficie, pressione, barra = battistrada
+    (this.tyres.querySelector('.title') as HTMLElement).textContent = `Gomme · ${d.compound}`;
+    const cells = this.tyres.querySelectorAll<HTMLElement>('.tyre');
+    d.tyres.forEach((t, i) => {
+      const c = cells[i];
+      c.style.borderColor = tempColor(t.temp, t.optimal);
+      c.style.background = tempColor(t.temp, t.optimal) + '33';
+      (c.querySelector('.t') as HTMLElement).textContent = `${Math.round(t.temp)}°`;
+      (c.querySelector('.p') as HTMLElement).textContent = `${t.pressure.toFixed(2)} bar`;
+      const bar = c.querySelector('.w i') as HTMLElement;
+      bar.style.width = `${t.tread * 100}%`;
+      bar.style.background = t.tread > 0.5 ? '#3ddc84' : t.tread > 0.25 ? '#ffcc00' : '#ff4d4d';
+      c.title = `Carcassa ${Math.round(t.core)} °C · battistrada ${(t.tread * 100).toFixed(0)}% · aderenza ${(t.grip * 100).toFixed(0)}%`;
+    });
+
+    this.info.innerHTML =`${d.trackName} · ${d.carName}<br>Telecamera: ${d.camera} (C) · Input: ${d.device}<br>H = aiuto · P = pausa`;
   }
 }

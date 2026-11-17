@@ -11,8 +11,19 @@
   "trackFront": 1.66,
   "trackRear": 1.62,
   "weightFront": 0.46,
-  "rollStiffnessFront": 0.56,
-  "loadTransferLag": 0.06,
+  "suspension": {
+    "unsprungMass": 45,
+    "springFront": 155000,
+    "springRear": 140000,
+    "bumpFront": 4800,
+    "reboundFront": 7000,
+    "bumpRear": 4500,
+    "reboundRear": 6500,
+    "arbFront": 95000,
+    "arbRear": 55000,
+    "pitchInertia": 1900,
+    "rollInertia": 520
+  },
 
   "wheelRadius": 0.34,
   "wheelInertia": 1.4,
@@ -26,7 +37,24 @@
     "falloff": 0.9,
     "relaxLong": 0.25,
     "relaxLat": 0.45,
-    "rollingResistance": 0.013
+    "rollingResistance": 0.013,
+    "optimalPressure": 2.0,
+    "thermal": {
+      "surfaceCapacity": 2200,
+      "coreCapacity": 11000,
+      "airCoolBase": 25,
+      "airCoolSpeed": 3,
+      "surfaceToCore": 130,
+      "coreToAir": 14,
+      "trackConduct": 40,
+      "slipHeatFraction": 0.6,
+      "wearPerMJ": 0.009
+    },
+    "compounds": {
+      "morbida": { "name": "Morbida", "muMul": 1.035, "optimalTemp": 82, "wearMul": 1.7, "heatMul": 1.15 },
+      "media": { "name": "Media", "muMul": 1.0, "optimalTemp": 90, "wearMul": 1.0, "heatMul": 1.0 },
+      "dura": { "name": "Dura", "muMul": 0.97, "optimalTemp": 98, "wearMul": 0.6, "heatMul": 0.88 }
+    }
   },
 
   "steeringLockDeg": 540,
@@ -46,7 +74,9 @@
   "finalDrive": 3.6,
   "drivetrainEfficiency": 0.9,
   "shiftTime": 0.08,
-  "diffLockCoeff": 60,
+  "diffPreload": 80,
+  "diffPowerLock": 0.4,
+  "diffCoastLock": 0.25,
 
   "maxBrakeTorque": 8200,
   "brakeBiasFront": 0.58,
@@ -55,5 +85,11 @@
   "liftArea": 1.55,
   "aeroBalanceFront": 0.42,
 
-  "fuelKg": 60
+  "fuelKg": 60,
+
+  "setup": {
+    "compound": "media",
+    "pressureFront": 1.45,
+    "pressureRear": 1.45
+  }
 }

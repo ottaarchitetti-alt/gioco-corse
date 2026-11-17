@@ -7,16 +7,15 @@ import { lerp, lerpAngle, RAD } from '../core/math';
 import type { Vehicle } from '../physics/Vehicle';
 import type { CarRig } from './AssetManager';
 
-/** Quanto la carrozzeria si inclina per ogni m/s² di accelerazione (radianti). */
-const PITCH_PER_ACC = 0.0035;
-const ROLL_PER_ACC = 0.005;
-
 export class CarView {
   /** Posizione interpolata (origine del modello) e imbardata, per le telecamere. */
   readonly position = new THREE.Vector3();
   yaw = 0;
+  private wheelBaseY: number[];
 
-  constructor(readonly rig: CarRig, private vehicle: Vehicle) {}
+  constructor(readonly rig: CarRig, private vehicle: Vehicle) {
+    this.wheelBaseY = rig.wheelPivots.map((p) => p.position.y);
+  }
 
   update(alpha: number): void {
     const v = this.vehicle;
@@ -32,12 +31,15 @@ export class CarView {
     rig.root.position.copy(this.position);
     rig.root.rotation.y = this.yaw;
 
-    // Beccheggio e rollio dalla fisica (accelerazioni filtrate)
-    rig.body.rotation.x = -v.aLong * PITCH_PER_ACC;
-    rig.body.rotation.z = v.aLat * ROLL_PER_ACC;
+    // Carrozzeria: posizione e inclinazioni calcolate dalle sospensioni
+    const s = v.suspension;
+    rig.body.position.y = s.heave;
+    rig.body.rotation.x = s.pitch; // + = muso giù
+    rig.body.rotation.z = s.roll; // + = lato destro giù
 
     for (let i = 0; i < 4; i++) {
       if (i < 2) rig.wheelPivots[i].rotation.y = v.steerAngle;
+      rig.wheelPivots[i].position.y = this.wheelBaseY[i] + v.roadHeight[i]; // es. sopra il cordolo
       rig.wheelSpinners[i].rotation.x = v.tires[i].spin;
     }
     if (rig.steeringWheel) rig.steeringWheel.rotation.z = -v.steeringWheelDeg * RAD;

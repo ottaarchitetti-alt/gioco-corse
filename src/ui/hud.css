@@ -56,6 +56,17 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-telemetry { top: 150px; left: 16px; font-size: 12px; white-space: pre; line-height: 1.45; display: none; }
 .hud-telemetry.show { display: block; }
 
+.hud-tyres { bottom: 18px; right: 16px; padding: 8px 10px; }
+.hud-tyres .title { font-size: 11px; color: var(--hud-dim); text-align: center; margin-bottom: 5px; }
+.hud-tyres .grid { display: grid; grid-template-columns: 62px 62px; gap: 6px 14px; }
+.hud-tyres .tyre { border: 2px solid #555; border-radius: 6px; padding: 3px 4px; text-align: center; }
+.hud-tyres .t { font-size: 16px; font-weight: 700; }
+.hud-tyres .p { font-size: 10px; color: var(--hud-fg); opacity: 0.85; }
+.hud-tyres .w { height: 4px; background: #2a2e35; border-radius: 2px; margin-top: 3px; overflow: hidden; }
+.hud-tyres .w i { display: block; height: 100%; }
+
+.hud-graph { top: 90px; right: 16px; padding: 0; }
+
 /* ===== Schermate (avvio, pausa, aiuto) ===== */
 .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(5, 8, 12, 0.72); pointer-events: auto; z-index: 10; }
 .overlay.hidden { display: none; }

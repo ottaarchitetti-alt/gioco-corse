@@ -27,7 +27,7 @@ export const emptyInput = (): DriverInput => ({
 });
 
 /** Azioni "di gioco" (non di guida) che scattano una volta per pressione. */
-export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'mute' | 'debug';
+export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'mute' | 'debug';
 
 /** Impostazioni del volante, salvate in locale. Si regolano dal pannello debug (F2). */
 export interface WheelSettings {
@@ -64,6 +64,7 @@ const ACTION_KEYS: Record<string, GameAction> = {
   Escape: 'pause',
   KeyH: 'help',
   KeyT: 'telemetry',
+  KeyG: 'graphs',
   KeyM: 'mute',
   F2: 'debug',
 };

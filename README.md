@@ -16,7 +16,16 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 1 completata
+## Stato: Fase 2 completata
+- Sospensioni vere (molle, ammortizzatori, barre antirollio): il trasferimento di carico
+  passa dalla carrozzeria che beccheggia e rolla; cordoli rialzati, erba sconnessa
+- Gomme: temperatura superficie/carcassa, pressione che sale col calore, usura,
+  mescole morbida/media/dura, termocoperte opzionali, moltiplicatore usura
+- Differenziale autobloccante a rampe (precarico, trazione, rilascio)
+- HUD gomme (colore = temperatura, pressione, battistrada), telemetria T, grafici G
+- Strumento di taratura per sviluppatori: in console `devTools.autopilot(5)`
+
+## Fase 1
 - Auto GT segnaposto su pista di prova (2,2 km), fisica a 240 Hz
 - Fisica: 4 ruote con carico per ruota, trasferimento di carico, modello gomma
   con slip combinato, motore/cambio/differenziale autobloccante, aerodinamica,

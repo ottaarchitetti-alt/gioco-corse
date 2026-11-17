@@ -3,9 +3,43 @@
  * Le auto vivono come file JSON in /public/cars/*.car.json, così puoi
  * crearne di nuove o modificarle senza toccare il codice.
  *
- * Unità SI: metri, kg, secondi, Newton, Nm. Angoli in GRADI nel JSON
- * (più leggibili), convertiti in radianti nel codice.
+ * Unità SI: metri, kg, secondi, Newton, Nm, Watt, °C, bar.
+ * Angoli in GRADI nel JSON (più leggibili), convertiti in radianti nel codice.
+ *
+ * I campi del gruppo "setup" sono quelli che dalla Fase 7 si regoleranno
+ * dal menu assetto (pressioni, mescola, molle, barre, freni, differenziale...).
  */
+
+/** Modello termico della gomma: due "strati", superficie (battistrada) e carcassa. */
+export interface TireThermal {
+  /** Capacità termica dello strato superficiale (J/K): bassa = si scalda/raffredda in fretta. */
+  surfaceCapacity: number;
+  /** Capacità termica della carcassa (J/K): alta = cambia temperatura lentamente. */
+  coreCapacity: number;
+  /** Raffreddamento della superficie verso l'aria: base + per ogni m/s di velocità (W/K). */
+  airCoolBase: number;
+  airCoolSpeed: number;
+  /** Scambio di calore superficie ↔ carcassa (W/K). */
+  surfaceToCore: number;
+  /** Raffreddamento della carcassa verso aria/cerchio (W/K). */
+  coreToAir: number;
+  /** Scambio con l'asfalto a carico nominale (W/K). */
+  trackConduct: number;
+  /** Frazione della potenza di strisciamento che diventa calore nella gomma. */
+  slipHeatFraction: number;
+  /** Usura: frazione di battistrada consumata per MJ di energia di strisciamento (a moltiplicatore 1). */
+  wearPerMJ: number;
+}
+
+/** Mescola: modifica aderenza, temperatura ideale, usura, velocità di riscaldamento. */
+export interface Compound {
+  name: string;
+  muMul: number;
+  /** Temperatura ideale (°C, media superficie/carcassa). */
+  optimalTemp: number;
+  wearMul: number;
+  heatMul: number;
+}
 
 export interface TireParams {
   /** Coefficiente di aderenza di picco al carico nominale (gomma slick GT ≈ 1.6). */
@@ -27,6 +61,37 @@ export interface TireParams {
   relaxLat: number;
   /** Resistenza al rotolamento (frazione del carico). */
   rollingResistance: number;
+  /** Pressione a caldo ideale (bar). */
+  optimalPressure: number;
+  thermal: TireThermal;
+  compounds: Record<string, Compound>;
+}
+
+export interface SuspensionParams {
+  /** Massa non sospesa per ruota (ruota, freno, portamozzo) in kg. */
+  unsprungMass: number;
+  /** Rigidezza molle riportata alla ruota (N/m). */
+  springFront: number;
+  springRear: number;
+  /** Ammortizzatori (N·s/m): compressione (bump) ed estensione (rebound). */
+  bumpFront: number;
+  reboundFront: number;
+  bumpRear: number;
+  reboundRear: number;
+  /** Barre antirollio riportate alla ruota (N/m). */
+  arbFront: number;
+  arbRear: number;
+  /** Inerzie della massa sospesa (kg·m²). */
+  pitchInertia: number;
+  rollInertia: number;
+}
+
+/** Valori regolabili dal pilota (Fase 7: menu assetto). */
+export interface CarSetup {
+  compound: string;
+  /** Pressione a freddo (bar, relativa) */
+  pressureFront: number;
+  pressureRear: number;
 }
 
 export interface CarParams {
@@ -38,16 +103,14 @@ export interface CarParams {
   geometryFromModel?: boolean;
 
   // --- Massa e geometria ---
-  mass: number; // kg, con pilota
+  mass: number; // kg, con pilota, senza carburante
   yawInertia: number; // kg·m², inerzia attorno all'asse verticale
   cgHeight: number; // m, altezza baricentro
   wheelbase: number; // m, passo
   trackFront: number; // m, carreggiata
   trackRear: number;
   weightFront: number; // frazione del peso sull'anteriore (0..1)
-  rollStiffnessFront: number; // frazione della rigidezza a rollio sull'anteriore (0..1)
-  /** Costante di tempo (s) con cui il carico si trasferisce: imita la risposta delle sospensioni. */
-  loadTransferLag: number;
+  suspension: SuspensionParams;
 
   // --- Ruote ---
   wheelRadius: number; // m
@@ -73,8 +136,10 @@ export interface CarParams {
   finalDrive: number;
   drivetrainEfficiency: number;
   shiftTime: number; // s, tempo di cambiata (gas tagliato)
-  /** Differenziale autobloccante semplice: coppia trasferita per rad/s di differenza (Nm·s). */
-  diffLockCoeff: number;
+  /** Differenziale autobloccante a rampe (a frizioni). */
+  diffPreload: number; // Nm di bloccaggio sempre presente
+  diffPowerLock: number; // frazione della coppia in trazione usata per bloccare (0..1)
+  diffCoastLock: number; // frazione della coppia in rilascio/freno motore (0..1)
 
   // --- Freni ---
   maxBrakeTorque: number; // Nm totali su tutte e 4 le ruote
@@ -87,6 +152,9 @@ export interface CarParams {
 
   // --- Carburante (Fase 7: consumo; ora conta solo il peso) ---
   fuelKg: number;
+
+  /** Assetto di partenza */
+  setup: CarSetup;
 }
 
 /** Carica un'auto da /public/cars. */

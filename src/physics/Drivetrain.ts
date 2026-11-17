@@ -30,6 +30,8 @@ export class Drivetrain {
   private shiftTimer = 0;
   /** Coppia motore attuale (per telemetria) */
   engineTorque = 0;
+  /** Coppia trasferita dal differenziale tra le ruote posteriori (per telemetria) */
+  diffTransfer = 0;
 
   constructor(private car: CarParams) {
     this.rpm = car.idleRpm;
@@ -130,12 +132,23 @@ export class Drivetrain {
     // Coppia all'assale posteriore
     const axleTorque = engineTorque * ratio * car.drivetrainEfficiency;
 
-    // Differenziale autobloccante: la ruota che gira più veloce cede coppia all'altra
-    const lock = car.diffLockCoeff * (omegaL - omegaR);
+    // ---- Differenziale autobloccante a rampe (a frizioni) ----
+    // Le frizioni possono trasferire al massimo "lockCap" Nm dalla ruota più veloce alla più lenta:
+    //   lockCap = precarico + rampa × coppia in ingresso
+    // con rampa diversa in trazione (power) e in rilascio (coast). Più bloccaggio in trazione =
+    // più motricità in uscita ma più sottosterzo; in rilascio = più stabilità in inserimento.
+    const reflectedInertia = coupled ? (car.engineInertia * ratio * ratio) / 2 : 0;
+    const dOmega = omegaL - omegaR;
+    const ramp = axleTorque >= 0 ? car.diffPowerLock : car.diffCoastLock;
+    const lockCap = car.diffPreload + ramp * Math.abs(axleTorque);
+    // Coppia che basterebbe ad annullare la differenza in questo passo (frizioni "incollate")
+    const toLock = (Math.abs(dOmega) * (car.wheelInertia + reflectedInertia)) / (2 * dt);
+    const transfer = Math.sign(dOmega) * Math.min(lockCap, toLock * 0.8);
+    this.diffTransfer = transfer;
     return {
-      torqueRL: axleTorque / 2 - lock,
-      torqueRR: axleTorque / 2 + lock,
-      reflectedInertia: coupled ? (car.engineInertia * ratio * ratio) / 2 : 0,
+      torqueRL: axleTorque / 2 - transfer,
+      torqueRR: axleTorque / 2 + transfer,
+      reflectedInertia,
     };
   }
 

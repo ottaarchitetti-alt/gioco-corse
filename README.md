@@ -16,7 +16,18 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 7 completata
+## Stato: tutte le fasi completate (1–8)
+Il meteo (Fase 8) è stato rimandato come deciso all'inizio (D11).
+
+### Fase 8 — rifinitura
+- Impostazioni (menu principale e pausa): qualità grafica bassa/media/alta (ombre,
+  risoluzione, densità alberi), contatore FPS, volume generale e motori avversari
+- Rumore del motore dell'avversario più vicino, in base alla distanza
+- Replay a fine sessione: play/pausa, ±10 s, velocità 0,25×–4×, barra del tempo,
+  auto da seguire, camere TV a bordo pista con zoom o camere di bordo
+- Corretto lo "sfarfallio" tra asfalto e prato visti da lontano
+
+## Fase 7
 - Menu ASSETTO (da scelta sessione o pausa), salvato per pista: ali, rapporto finale,
   differenziale, molle, barre, ammortizzatori, freni, pressioni, mescola, carburante
 - Carburante per auto: consumo dalla potenza erogata (~0,76 kg/giro sull'Anello),
@@ -103,7 +114,11 @@ src/
   physics/    Vehicle, Tire, Drivetrain, Aero, CarParams
   track/      formato pista, spline (coordinate s,d), generatore 3D
   render/     scena, caricamento modelli, vista auto, telecamere, texture
-  race/       cronometraggio
+  race/       cronometraggio, sessioni, fantasma, replay
+  ai/         traiettoria ideale, pilota bot, elenco piloti
+  strategy/   assetto, menu assetto, pilota automatico ai box
+  editor/     editor piste 2D, anteprima 3D
+  storage/    IndexedDB: piste, sfondi, record
   ui/         HUD, schermate, pannello debug
   audio/      suono motore
   game/       Game.ts: collega tutto

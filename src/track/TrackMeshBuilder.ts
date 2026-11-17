@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { asphaltTexture, checkerTexture, grassTexture, seededRandom } from '../render/textures';
 import { buildProp } from './PropBuilder';
+import { loadSettings, qualityParams } from '../ui/Settings';
 import { PROP_CATALOG } from './props';
 import { KERB_WIDTH, TrackSpline, type PitLaneSpline } from './TrackSpline';
 
@@ -194,7 +195,9 @@ function buildGround(anisotropy: number): THREE.Mesh {
   tex.repeat.set(size / 8, size / 8);
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size),
-    new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }),
+    // polygonOffset: il prato viene sempre disegnato "dietro" asfalto e cordoli che gli stanno
+    // appena sopra, anche da lontano (evita lo sfarfallio tra superfici quasi sovrapposte)
+    new THREE.MeshStandardMaterial({ map: tex, roughness: 1, polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 8 }),
   );
   mesh.rotation.x = -Math.PI / 2;
   mesh.name = 'ground';
@@ -260,7 +263,8 @@ function buildTrees(track: TrackSpline): THREE.Group {
 
   const positions: [number, number, number][] = [];
   let tries = 0;
-  while (positions.length < 450 && tries < 6000) {
+  const maxTrees = Math.round(450 * qualityParams(loadSettings().quality).treeFactor);
+  while (positions.length < maxTrees && tries < 6000) {
     tries++;
     const x = minX + rnd() * (maxX - minX);
     const z = minZ + rnd() * (maxZ - minZ);

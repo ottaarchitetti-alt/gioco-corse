@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { loadSettings, qualityParams, type Quality } from '../ui/Settings';
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -16,16 +17,17 @@ export class Renderer {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const qp = qualityParams(loadSettings().quality);
+    this.renderer.setPixelRatio(qp.pixelRatio);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.9;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = qp.shadows;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
-    this.camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.05, 4000);
+    this.camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 4000);
 
     // ---- Cielo fisico ----
     const sky = new Sky();
@@ -48,8 +50,8 @@ export class Renderer {
     // ---- Luci ----
     this.scene.add(new THREE.HemisphereLight('#cfe3ff', '#4a5a3a', 0.6));
     this.sun = new THREE.DirectionalLight('#fff3e0', 2.6);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.castShadow = qp.shadows;
+    this.sun.shadow.mapSize.set(qp.shadowMap, qp.shadowMap);
     const sc = this.sun.shadow.camera;
     sc.left = sc.bottom = -45;
     sc.right = sc.top = 45;
@@ -76,6 +78,26 @@ export class Renderer {
 
   render(): void {
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Applica una qualità grafica senza ricaricare (ombre e risoluzione). */
+  applyQuality(q: Quality): void {
+    const qp = qualityParams(q);
+    this.renderer.setPixelRatio(qp.pixelRatio);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    const changed = this.renderer.shadowMap.enabled !== qp.shadows || this.sun.shadow.mapSize.x !== qp.shadowMap;
+    this.renderer.shadowMap.enabled = qp.shadows;
+    this.sun.castShadow = qp.shadows;
+    if (this.sun.shadow.mapSize.x !== qp.shadowMap) {
+      this.sun.shadow.mapSize.set(qp.shadowMap, qp.shadowMap);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    // i materiali vanno ricompilati quando le ombre si accendono/spengono
+    if (changed) this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach((x) => (x.needsUpdate = true));
+    });
   }
 
   /** Libera la memoria della GPU (usato dall'anteprima 3D dell'editor). */

@@ -18,7 +18,7 @@ export class CameraRig {
   private tmpQ = new THREE.Quaternion();
   private flipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 
-  constructor(private camera: THREE.PerspectiveCamera, private view: CarView) {}
+  constructor(private camera: THREE.PerspectiveCamera, public view: CarView) {}
 
   next(): CameraMode {
     this.mode = CAMERA_MODES[(CAMERA_MODES.indexOf(this.mode) + 1) % CAMERA_MODES.length];

@@ -46,6 +46,7 @@ export class MainMenu {
         <div class="menu-toolbar">
           <button class="primary" data-act="nuova">+ Nuova pista</button>
           <button data-act="importa">Importa pista (.json)</button>
+          <button data-act="impostazioni">⚙ Impostazioni</button>
         </div>
         ${error ? `<p class="err">${esc(error)}</p>` : ''}
         <ul class="track-list">${rows || '<li class="empty">Nessuna pista</li>'}</ul>
@@ -78,6 +79,10 @@ export class MainMenu {
         }
         case 'esporta':
           return downloadTrack(await TrackStore.load(id!));
+        case 'impostazioni': {
+          const { loadSettings, openSettings } = await import('./Settings');
+          return openSettings(loadSettings(), () => {});
+        }
         case 'importa': {
           const t = await pickTrackFile();
           await TrackStore.save(t);

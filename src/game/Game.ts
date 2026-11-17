@@ -21,6 +21,7 @@ import { loadCar, type CarParams } from '../physics/CarParams';
 import { resolveCollisions } from '../physics/Collisions';
 import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../physics/Vehicle';
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
+import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
 import type { LapRecord, TimingEvent } from '../race/LapTiming';
 import { Competitor, Session, SESSION_NAMES, type SessionConfig, type SessionEvent } from '../race/Session';
 import { cloneRig, loadCarRig, type CarRig } from '../render/AssetManager';
@@ -37,6 +38,7 @@ import { Hud, type SectorColor, type TimingHud } from '../ui/Hud';
 import { Overlay } from '../ui/Overlay';
 import { navigate } from '../ui/router';
 import { TelemetryGraph } from '../ui/TelemetryGraph';
+import { loadSettings, openSettings, type GameSettings } from '../ui/Settings';
 import { PitController, serviceTime, type PitPlan } from '../strategy/PitController';
 import { applySetup, loadSetup, saveSetup, type SetupValues } from '../strategy/Setup';
 import type { PitStall } from '../track/TrackSpline';
@@ -101,6 +103,11 @@ export class Game {
   private renderer!: Renderer;
   private input = new InputManager();
   private sound = new EngineSound();
+  /** Motore dell'avversario più vicino (si sente in base alla distanza) */
+  private opponentSound = new EngineSound();
+  private settings: GameSettings = loadSettings();
+  private fpsEl: HTMLDivElement | null = null;
+  private fpsSmooth = 60;
   private aids: DrivingAids = loadJSON('aids', DEFAULT_AIDS);
   private sim: SimSettings = loadJSON('sim', DEFAULT_SIM);
   private sessionCfg: SessionConfig = loadJSON('session', DEFAULT_SESSION);
@@ -146,6 +153,9 @@ export class Game {
   /** Miglior settore di sempre (anche se il giro record è un altro) */
   private bestSectorsEver: (number | null)[] = [];
   private ghostRec = new GhostRecorder();
+  /** Replay della sessione */
+  private replayRec = new ReplayRecorder();
+  private replayPlayer: ReplayPlayer | null = null;
   private ghost!: GhostPlayer;
   private sessionGhost: number[] | null = null;
   /** Settori del giro appena concluso, mostrati per qualche secondo nel giro nuovo */
@@ -276,6 +286,9 @@ export class Game {
         this.started = true;
         this.sound.start();
         this.sound.setPaused(false);
+        this.opponentSound.start();
+        this.opponentSound.setPaused(false);
+        this.applySettings();
         this.startSession(cfg);
       },
       () => void this.openWheelCalibration(),
@@ -311,6 +324,7 @@ export class Game {
     this.lastLapShown = null;
     this.resultsTimer = 0;
     this.ghostRec.restart();
+    this.replayRec.reset();
     this.placeForSession();
 
     this.hud?.showLapList(null);
@@ -494,6 +508,7 @@ export class Game {
     }
     actions.push(
       { label: '↻ Ripeti sessione', primary: s.config.type !== 'qualifica', act: () => this.startSession(this.sessionCfg) },
+      ...(this.replayRec.frames.length > 20 ? [{ label: '🎬 Replay', act: () => this.startReplay() }] : []),
       { label: 'Altra sessione…', act: () => this.showSessionChoice() },
       ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
       { label: 'Menu principale', act: () => navigate('menu') },
@@ -809,6 +824,7 @@ export class Game {
   }
 
   private fixedUpdate(dt: number): void {
+    if (this.replayPlayer) return; // durante il replay la simulazione è ferma
     const finished = this.session.state === 'finita';
     const hold = this.session.state === 'semaforo';
 
@@ -891,6 +907,7 @@ export class Game {
     const t = this.player.timing;
     if (t.lap > 0) this.ghostRec.sample(t.current, this.vehicle.x, this.vehicle.z, this.vehicle.yaw);
 
+    if (this.session.state !== 'finita') this.replayRec.record(dt, this.entities);
     const byComp = new Map(this.entities.map((e) => [e.competitor, e]));
     this.session.update(dt, (c) => {
       const e = byComp.get(c)!;
@@ -986,9 +1003,11 @@ export class Game {
       this.overlay.hide();
       this.loop.paused = false;
       this.sound.setPaused(false);
+      this.opponentSound.setPaused(false);
     } else {
       this.loop.paused = true;
       this.sound.setPaused(true);
+      this.opponentSound.setPaused(true);
       if (!show) return;
       this.overlay.showPause(() => this.togglePause(), [
         { label: '↻ Ricomincia sessione', act: () => this.startSession(this.sessionCfg) },
@@ -997,10 +1016,55 @@ export class Game {
         { label: '🔧 Assetto', act: () => void this.openSetup() },
         { label: '🛞 Strategia box', act: () => this.openPitPlan() },
         { label: '🎮 Calibra volante', act: () => void this.openWheelCalibration() },
+        { label: '⚙ Impostazioni', act: () => openSettings(this.settings, () => this.applySettings()) },
         ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
         { label: 'Menu principale', act: () => navigate('menu') },
       ]);
     }
+  }
+
+  /** Avvia il replay della sessione appena conclusa. */
+  private startReplay(): void {
+    this.overlay.hide();
+    this.sound.setPaused(true);
+    this.opponentSound.setPaused(true);
+    this.loop.paused = false;
+    const cars = this.entities.map((e) => ({ name: e.name, vehicle: e.vehicle, view: e.view }));
+    this.replayPlayer = new ReplayPlayer(this.replayRec, cars, this.cameras, this.renderer.camera, this.track, () => {
+      this.replayPlayer = null;
+      this.cameras.view = this.playerEntity.view;
+      this.cameras.mode = 'esterna';
+      this.showResults();
+    }, 0);
+  }
+
+  /** Applica impostazioni grafiche e audio. */
+  private applySettings(): void {
+    const s = this.settings;
+    this.renderer.applyQuality(s.quality);
+    this.sound.setVolume(s.volume);
+    if (s.showFps && !this.fpsEl) {
+      this.fpsEl = document.createElement('div');
+      this.fpsEl.className = 'hud-panel hud-fps mono';
+      this.uiEl.appendChild(this.fpsEl);
+    } else if (!s.showFps && this.fpsEl) {
+      this.fpsEl.remove();
+      this.fpsEl = null;
+    }
+  }
+
+  /** Il motore dell'avversario più vicino: più forte quanto più è vicino (entro 90 m). */
+  private updateOpponentSound(): void {
+    const me = this.vehicle;
+    let best: CarEntity | null = null, bd = 90;
+    for (const e of this.entities) {
+      if (e.isPlayer) continue;
+      const d = Math.hypot(e.vehicle.x - me.x, e.vehicle.z - me.z);
+      if (d < bd) { bd = d; best = e; }
+    }
+    const vol = best ? this.settings.volume * this.settings.opponentVolume * Math.pow(1 - bd / 90, 2) * 0.8 : 0;
+    this.opponentSound.setVolume(vol);
+    if (best) this.opponentSound.update(best.vehicle.drivetrain.rpm, best.vehicle.appliedThrottle, 0, 0, false);
   }
 
   /** Calibrazione guidata del volante (sopra qualsiasi schermata). */
@@ -1046,6 +1110,12 @@ export class Game {
   }
 
   private render(alpha: number, frameDt: number): void {
+    if (this.replayPlayer) {
+      this.replayPlayer.update(frameDt);
+      this.renderer.followShadows(this.replayPlayer['cars'][this.replayPlayer.follow].view.position);
+      this.renderer.render();
+      return;
+    }
     this.handleActions();
     const v = this.vehicle;
     for (const e of this.entities) e.view.update(alpha);
@@ -1106,6 +1176,12 @@ export class Game {
 
     const maxSlip = Math.max(...v.tires.map((ty) => ty.combinedSlip));
     this.sound.update(dt.rpm, v.appliedThrottle, maxSlip, v.speed, dt.rpm >= this.car.maxRpm * 0.995);
+
+    this.updateOpponentSound();
+    if (this.fpsEl && frameDt > 0) {
+      this.fpsSmooth += (1 / frameDt - this.fpsSmooth) * 0.05;
+      this.fpsEl.textContent = `${Math.round(this.fpsSmooth)} FPS`;
+    }
 
     this.telemetryTimer -= frameDt;
     if (this.telemetryTimer <= 0 && this.hud.telemetry.classList.contains('show')) {

@@ -171,3 +171,18 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-dash .aids span.lim { background: #2a63d4; color: #fff; }
 .hud-pit { top: 40%; left: 50%; transform: translate(-50%, -50%); font-size: 18px; text-align: center; display: none; padding: 14px 24px; }
 .hud-pit .big { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* Impostazioni e FPS */
+.settings { z-index: 45; }
+.settings .form label { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; color: #c6ced8; }
+.settings .form label.row { flex-direction: row; align-items: center; gap: 8px; }
+.hud-fps { bottom: 4px; right: 50%; transform: translateX(50%); font-size: 11px; padding: 2px 8px; }
+
+/* Replay */
+body.replay-mode #ui .hud-panel { display: none !important; }
+.replay-bar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 30; display: flex; gap: 8px; align-items: center;
+  background: rgba(12, 14, 18, 0.85); padding: 8px 12px; border-radius: 10px; color: var(--hud-fg); flex-wrap: wrap; max-width: calc(100vw - 32px); box-sizing: border-box; }
+.replay-bar .rtitle { font-weight: 800; color: var(--bad); }
+.replay-bar input[type=range] { width: 260px; }
+.replay-bar button, .replay-bar select { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; border: 1px solid #39414c; background: #222933; color: var(--hud-fg); cursor: pointer; }
+.replay-bar button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }

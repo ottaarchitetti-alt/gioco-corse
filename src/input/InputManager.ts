@@ -2,13 +2,17 @@
  * Gestione input: tastiera, gamepad e volante (es. Logitech G29).
  *
  * Tutte le periferiche producono lo stesso oggetto `DriverInput`, che è anche
- * ciò che useranno i bot: la fisica non sa chi la sta guidando.
+ * ciò che usano i bot: la fisica non sa chi la sta guidando.
  *
  * Convenzioni:
  *   steer    ∈ [-1, 1]  +1 = sterzo tutto a SINISTRA, -1 = tutto a destra
  *                       (1 = metà della rotazione massima del volante dell'auto)
  *   throttle ∈ [0, 1]
  *   brake    ∈ [0, 1]
+ *
+ * VOLANTE: assi, pedali e palette si configurano con la CALIBRAZIONE GUIDATA
+ * (WheelCalibration.ts), che misura i valori reali del tuo volante: niente
+ * da indovinare su assi o pedali "invertiti".
  */
 import { clamp, moveTowards } from '../core/math';
 import { loadJSON, saveJSON } from '../core/storage';
@@ -29,32 +33,76 @@ export const emptyInput = (): DriverInput => ({
 /** Azioni "di gioco" (non di guida) che scattano una volta per pressione. */
 export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug';
 
-/** Impostazioni del volante, salvate in locale. Si regolano dal pannello debug (F2). */
+/** Un pedale calibrato: su quale asse sta e quanto vale a riposo e a fondo corsa. */
+export interface PedalCalibration {
+  axis: number;
+  rest: number;
+  full: number;
+}
+
+/**
+ * Come si trasforma la rotazione del volante in sterzo:
+ *  - 'reale':   1:1 — il volante dell'auto ruota quanto il tuo (consigliato:
+ *               imposta in G HUB la stessa rotazione dell'auto, 540° per la GT)
+ *  - 'scalato': tutta la corsa del tuo volante = tutta la corsa del volante dell'auto
+ */
+export type SteerMode = 'reale' | 'scalato';
+
+/** Impostazioni del volante, salvate in locale. */
 export interface WheelSettings {
+  /** id del dispositivo calibrato (es. "Logitech G29 Driving Force Racing Wheel ...") */
+  deviceId: string;
+  calibrated: boolean;
   steerAxis: number;
-  throttleAxis: number;
-  brakeAxis: number;
-  /** Pedali che a riposo valgono +1 e premuti -1 (tipico del G29). */
-  pedalsInverted: boolean;
+  /** valore grezzo dell'asse con il volante dritto */
+  steerCenter: number;
   invertSteer: boolean;
-  /** Gradi di rotazione totale impostati nel driver (G HUB). Il G29 di default è 900°. */
+  /** Gradi di rotazione totale del volante fisico (misurati in calibrazione). */
   hardwareLockDeg: number;
+  steerMode: SteerMode;
+  /** 1 = lineare; >1 = meno sensibile al centro, più ai lati */
+  steerLinearity: number;
+  /** zona morta al centro (gradi) */
+  steerDeadzoneDeg: number;
+  throttle: PedalCalibration;
+  brake: PedalCalibration;
+  /** zona morta dei pedali (frazione di corsa) */
+  pedalDeadzone: number;
   shiftUpButton: number;
   shiftDownButton: number;
-  deadzone: number;
 }
 
 const DEFAULT_WHEEL: WheelSettings = {
+  deviceId: '',
+  calibrated: false,
   steerAxis: 0,
-  throttleAxis: 2,
-  brakeAxis: 3,
-  pedalsInverted: true,
+  steerCenter: 0,
   invertSteer: false,
   hardwareLockDeg: 900,
-  shiftUpButton: 4, // paletta destra (da verificare sul tuo G29)
+  steerMode: 'reale',
+  steerLinearity: 1,
+  steerDeadzoneDeg: 0.5,
+  // valori tipici del G29 su Windows: pedali a riposo +1, premuti −1
+  throttle: { axis: 2, rest: 1, full: -1 },
+  brake: { axis: 5, rest: 1, full: -1 },
+  pedalDeadzone: 0.03,
+  shiftUpButton: 4, // paletta destra
   shiftDownButton: 5, // paletta sinistra
-  deadzone: 0.01,
 };
+
+/** Converte le impostazioni salvate dalle versioni precedenti (Fasi 1–4). */
+function migrateWheel(raw: Record<string, unknown>): WheelSettings {
+  const w = { ...DEFAULT_WHEEL, ...raw } as WheelSettings & { throttleAxis?: number; brakeAxis?: number; pedalsInverted?: boolean };
+  if (typeof w.throttleAxis === 'number' && !raw.throttle) {
+    const inv = w.pedalsInverted !== false;
+    w.throttle = { axis: w.throttleAxis, rest: inv ? 1 : -1, full: inv ? -1 : 1 };
+    w.brake = { axis: w.brakeAxis ?? 3, rest: inv ? 1 : -1, full: inv ? -1 : 1 };
+  }
+  delete w.throttleAxis;
+  delete w.brakeAxis;
+  delete w.pedalsInverted;
+  return w;
+}
 
 /** Tasti → azioni di gioco. */
 const ACTION_KEYS: Record<string, GameAction> = {
@@ -73,8 +121,11 @@ const ACTION_KEYS: Record<string, GameAction> = {
 
 export type InputDevice = 'tastiera' | 'gamepad' | 'volante';
 
+/** Parole che fanno riconoscere un volante dal nome del dispositivo */
+const WHEEL_WORDS = /wheel|g29|g920|g923|g27|g25|driving force|logitech|thrustmaster|fanatec|moza|simagic/i;
+
 export class InputManager {
-  readonly wheel: WheelSettings = loadJSON('wheel', DEFAULT_WHEEL);
+  readonly wheel: WheelSettings = migrateWheel(loadJSON<Record<string, unknown>>('wheel', {}));
 
   /** Dispositivo usato per ultimo (mostrato nell'HUD). */
   device: InputDevice = 'tastiera';
@@ -84,18 +135,27 @@ export class InputManager {
   gamepadName = '';
   /** Rotazione totale del volante dell'auto in gradi (dal file .car.json). */
   carSteeringLockDeg = 540;
+  /** Se true la lettura del volante è sospesa (durante la calibrazione). */
+  suspended = false;
 
   private keys = new Set<string>();
   private pendingActions: GameAction[] = [];
   private pendingShiftUp = false;
   private pendingShiftDown = false;
   private prevButtons: boolean[] = [];
+  /**
+   * Chrome riporta 0 per un asse finché non lo muovi la prima volta: un pedale
+   * a riposo che dovrebbe valere +1 sembrerebbe "premuto a metà".
+   * Ricordiamo quali assi hanno già dato un valore vero.
+   */
+  private axisSeen = new Set<number>();
 
   // Stato "morbido" della tastiera: i tasti sono on/off, quindi li trasformiamo in rampe.
   private kbSteer = 0;
   private kbThrottle = 0;
   private kbBrake = 0;
   private lastPadValues: number[] = [];
+  private lastPadId = '';
 
   constructor() {
     window.addEventListener('keydown', (e) => {
@@ -122,6 +182,17 @@ export class InputManager {
     const a = this.pendingActions;
     this.pendingActions = [];
     return a;
+  }
+
+  /** Tutti i dispositivi collegati. */
+  listPads(): Gamepad[] {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    return Array.from(pads).filter((p): p is Gamepad => !!p && p.connected);
+  }
+
+  /** È un volante? (calibrato come tale, oppure dal nome) */
+  isWheel(pad: Gamepad): boolean {
+    return (this.wheel.calibrated && pad.id === this.wheel.deviceId) || WHEEL_WORDS.test(pad.id) || pad.mapping !== 'standard';
   }
 
   /**
@@ -154,16 +225,16 @@ export class InputManager {
 
     // ---------- Gamepad / volante ----------
     const pad = this.pollGamepad();
-    if (pad) {
-      const usingPad = this.detectActivity(pad);
-      if (usingPad) this.device = pad.mapping === 'standard' ? 'gamepad' : 'volante';
+    if (pad && !this.suspended) {
+      const wheel = this.isWheel(pad);
+      if (this.detectActivity(pad)) this.device = wheel ? 'volante' : 'gamepad';
       if (this.device !== 'tastiera') {
-        const v = this.device === 'gamepad' ? this.readStandardPad(pad) : this.readWheel(pad);
+        const v = wheel ? this.readWheel(pad) : this.readStandardPad(pad);
         out.steer = v.steer;
         out.throttle = v.throttle;
         out.brake = v.brake;
       }
-      this.readShiftButtons(pad);
+      this.readShiftButtons(pad, wheel);
     }
 
     out.shiftUp = this.pendingShiftUp;
@@ -172,18 +243,27 @@ export class InputManager {
     return out;
   }
 
+  /** Sceglie il dispositivo: quello calibrato, altrimenti un volante, altrimenti il primo. */
   private pollGamepad(): Gamepad | null {
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    for (const p of pads) {
-      if (p && p.connected) {
-        this.gamepadName = p.id;
-        this.rawAxes = Array.from(p.axes);
-        this.rawButtons = p.buttons.map((b) => b.value);
-        return p;
-      }
+    const pads = this.listPads();
+    const pad =
+      pads.find((p) => this.wheel.calibrated && p.id === this.wheel.deviceId) ??
+      pads.find((p) => WHEEL_WORDS.test(p.id)) ??
+      pads[0] ?? null;
+    if (!pad) {
+      this.gamepadName = '';
+      return null;
     }
-    this.gamepadName = '';
-    return null;
+    if (pad.id !== this.lastPadId) {
+      this.lastPadId = pad.id;
+      this.axisSeen.clear();
+      this.lastPadValues = [];
+    }
+    this.gamepadName = pad.id;
+    this.rawAxes = Array.from(pad.axes);
+    this.rawButtons = pad.buttons.map((b) => b.value);
+    pad.axes.forEach((a, i) => { if (a !== 0) this.axisSeen.add(i); });
+    return pad;
   }
 
   /** Passa al gamepad/volante appena qualcosa si muove in modo significativo. */
@@ -213,40 +293,64 @@ export class InputManager {
     };
   }
 
+  /** Gradi di rotazione del volante fisico (+ = a sinistra), dal valore grezzo dell'asse. */
+  wheelDegrees(raw: number): number {
+    const w = this.wheel;
+    // asse ±1 = metà della rotazione totale
+    let deg = (raw - w.steerCenter) * (w.hardwareLockDeg / 2);
+    if (!w.invertSteer) deg = -deg; // sul G29 l'asse è negativo a sinistra
+    return deg;
+  }
+
+  /** Sterzo [-1,1] per l'auto dai gradi del volante fisico. */
+  steerFromDegrees(deg: number): number {
+    const w = this.wheel;
+    const half = this.carSteeringLockDeg / 2;
+    if (Math.abs(deg) < w.steerDeadzoneDeg) deg = 0;
+    else deg -= Math.sign(deg) * w.steerDeadzoneDeg;
+    let x = w.steerMode === 'reale'
+      ? deg / half // 1:1 con il volante dell'auto
+      : deg / (w.hardwareLockDeg / 2); // corsa intera → corsa intera
+    x = clamp(x, -1, 1);
+    if (w.steerLinearity !== 1) x = Math.sign(x) * Math.pow(Math.abs(x), w.steerLinearity);
+    return x;
+  }
+
+  /** Valore 0..1 di un pedale calibrato. */
+  pedalValue(p: PedalCalibration, raw: number | undefined): number {
+    if (raw === undefined) return 0;
+    // asse mai mosso e riportato a 0 da Chrome, ma il riposo vero è lontano da 0: è a riposo
+    if (raw === 0 && !this.axisSeen.has(p.axis) && Math.abs(p.rest) > 0.5) return 0;
+    const span = p.full - p.rest;
+    if (Math.abs(span) < 0.05) return 0;
+    const v = (raw - p.rest) / span;
+    const dz = this.wheel.pedalDeadzone;
+    return clamp((v - dz) / (1 - dz * 2), 0, 1);
+  }
+
   /** Volante: lo sterzo è 1:1 con i gradi reali, i pedali vengono normalizzati. */
   private readWheel(pad: Gamepad) {
     const w = this.wheel;
-    let ax = pad.axes[w.steerAxis] ?? 0;
-    if (w.invertSteer) ax = -ax;
-    if (Math.abs(ax) < w.deadzone) ax = 0;
-    // ax = ±1 corrisponde a metà della rotazione hardware (es. ±450° su 900°).
-    const steerDeg = -ax * (w.hardwareLockDeg / 2);
-    // Il volante dell'auto ruota al massimo di ±carLock/2: oltre quel punto si "tocca il fine corsa".
     return {
-      steer: clamp(steerDeg / (this.carSteeringLockDeg / 2), -1, 1),
-      throttle: this.pedal(pad.axes[w.throttleAxis]),
-      brake: this.pedal(pad.axes[w.brakeAxis]),
+      steer: this.steerFromDegrees(this.wheelDegrees(pad.axes[w.steerAxis] ?? w.steerCenter)),
+      throttle: this.pedalValue(w.throttle, pad.axes[w.throttle.axis]),
+      brake: this.pedalValue(w.brake, pad.axes[w.brake.axis]),
     };
   }
 
-  private pedal(v: number | undefined): number {
-    if (v === undefined) return 0;
-    const p = this.wheel.pedalsInverted ? (1 - v) / 2 : (v + 1) / 2;
-    return clamp((p - 0.02) / 0.96, 0, 1);
-  }
-
-  private readShiftButtons(pad: Gamepad): void {
-    const isWheel = pad.mapping !== 'standard';
+  private readShiftButtons(pad: Gamepad, isWheel: boolean): void {
     const upIdx = isWheel ? this.wheel.shiftUpButton : 5; // RB
     const downIdx = isWheel ? this.wheel.shiftDownButton : 4; // LB
     const pressed = pad.buttons.map((b) => b.pressed);
-    if (pressed[upIdx] && !this.prevButtons[upIdx]) this.pendingShiftUp = true;
-    if (pressed[downIdx] && !this.prevButtons[downIdx]) this.pendingShiftDown = true;
-    // Gamepad standard: Y = telecamera, Start = pausa, Select = reset
-    if (!isWheel) {
-      if (pressed[3] && !this.prevButtons[3]) this.pendingActions.push('camera');
-      if (pressed[9] && !this.prevButtons[9]) this.pendingActions.push('pause');
-      if (pressed[8] && !this.prevButtons[8]) this.pendingActions.push('reset');
+    if (!this.suspended) {
+      if (pressed[upIdx] && !this.prevButtons[upIdx]) this.pendingShiftUp = true;
+      if (pressed[downIdx] && !this.prevButtons[downIdx]) this.pendingShiftDown = true;
+      // Gamepad standard: Y = telecamera, Start = pausa, Select = reset
+      if (!isWheel) {
+        if (pressed[3] && !this.prevButtons[3]) this.pendingActions.push('camera');
+        if (pressed[9] && !this.prevButtons[9]) this.pendingActions.push('pause');
+        if (pressed[8] && !this.prevButtons[8]) this.pendingActions.push('reset');
+      }
     }
     this.prevButtons = pressed;
   }

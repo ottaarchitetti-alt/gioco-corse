@@ -25,6 +25,8 @@ export interface DebugCallbacks {
   onSimChange: () => void;
   /** Monta gomme nuove con mescola e pressioni dell'assetto */
   onNewTyres: () => void;
+  /** Apre la calibrazione guidata del volante */
+  onCalibrateWheel: () => void;
 }
 
 export class DebugPanel {
@@ -107,19 +109,10 @@ export class DebugPanel {
     ft.close();
 
     const fw = this.gui.addFolder('Volante / pedali');
-    const save = () => input.saveWheelSettings();
-    const w = input.wheel;
+    fw.add({ cal: cb.onCalibrateWheel }, 'cal').name('🎮 Calibrazione guidata…');
     fw.add(this.live, 'periferica').name('Rilevato').listen().disable();
     fw.add(this.live, 'assi').name('Assi grezzi').listen().disable();
     fw.add(this.live, 'pulsanti').name('Pulsanti premuti').listen().disable();
-    fw.add(w, 'steerAxis', 0, 9, 1).name('Asse sterzo').onChange(save);
-    fw.add(w, 'throttleAxis', 0, 9, 1).name('Asse acceleratore').onChange(save);
-    fw.add(w, 'brakeAxis', 0, 9, 1).name('Asse freno').onChange(save);
-    fw.add(w, 'pedalsInverted').name('Pedali invertiti').onChange(save);
-    fw.add(w, 'invertSteer').name('Inverti sterzo').onChange(save);
-    fw.add(w, 'hardwareLockDeg', 180, 1080, 10).name('Rotazione volante (°)').onChange(save);
-    fw.add(w, 'shiftUpButton', 0, 30, 1).name('Pulsante marcia su').onChange(save);
-    fw.add(w, 'shiftDownButton', 0, 30, 1).name('Pulsante marcia giù').onChange(save);
     fw.close();
 
     const fau = this.gui.addFolder('Audio');

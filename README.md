@@ -16,7 +16,20 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 4 completata
+## Stato: Fase 5 completata
+- Bot IA (fino a 19): traiettoria ideale calcolata in automatico su qualsiasi pista,
+  profilo di velocità da aderenza/potenza/deportanza, stessi comandi e stessa fisica
+  del pilota, 4 livelli (facile ~60 s, medio ~58, difficile ~56, esperto ~54,5 s
+  sull'Anello di prova), variazione individuale, si accodano senza tamponare e
+  aggirano le auto ferme (sorpassi e difese: Fase 6)
+- Collisioni tra auto (rettangoli orientati, impulso con attrito)
+- Griglia: ordine della qualifica, pole, metà o fondo
+- Volante: calibrazione guidata (dispositivo, riposo, asse sterzo, gradi reali con il
+  quarto di giro, pedali con riposo/fondo misurati, palette), sterzo reale 1:1 o scalato,
+  linearità e zone morte; corretto il "mezzo gas" dei pedali mai mossi in Chrome
+- Strumento sviluppatori: `devTools.bots(3, { opponents: 5, difficulty: 'esperto' })`
+
+## Fase 4
 - Sessioni: prove libere (con o senza limite di tempo), qualifica (a tempo, giro in corso
   completabile allo scadere), gara (a giri, partenza da fermo con semaforo, +5 s per
   partenza anticipata), risultati con classifica e giri, "Vai in gara" dopo la qualifica

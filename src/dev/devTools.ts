@@ -31,9 +31,9 @@ export function installDevTools(game: any): void {
 
     const lines: string[] = [];
     const prevCfg = { ...g.sessionCfg };
-    g.startSession(opts.session ?? { type: 'libere', minutes: 0, laps: 5 }, false);
+    g.startSession(opts.session ?? { ...g.sessionCfg, type: 'libere', minutes: 0, laps: 5, opponents: 0 }, false);
     if (!opts.session) {
-      g.placeOnTrack(tr.length - 30);
+      g.placeOnTrack(g.playerEntity, tr.length - 30);
       g.player.timing.resetPosition();
     }
     const timing = () => g.player.timing;
@@ -41,7 +41,7 @@ export function installDevTools(game: any): void {
     let simT = 0;
     try {
       while (timing().lap <= laps && simT < laps * 200 && g.session.state !== 'finita') {
-        const p = tr.project(v.x, v.z, g.carHint);
+        const p = tr.project(v.x, v.z, g.playerEntity.hint);
         // Sterzo: punta un punto della linea centrale più avanti con la velocità
         const look = Math.round((6 + v.speed * 0.45) / (tr.length / n));
         const tgt = tr.at(p.index + look);
@@ -85,5 +85,47 @@ export function installDevTools(game: any): void {
     return lines.join('\n');
   };
 
-  (window as any).devTools = { autopilot };
+  /**
+   * Simula una sessione con bot (senza disegnare) e riporta i loro tempi.
+   * Il pilota resta fermo ai box/fuori traiettoria.
+   *   devTools.bots(3, { opponents: 5, difficulty: 'esperto' })
+   */
+  const bots = (laps: number, opts: { opponents?: number; difficulty?: string; type?: string } = {}): string => {
+    const g = game;
+    const prevCfg = { ...g.sessionCfg };
+    const origRead = g.input.read.bind(g.input);
+    g.input.read = () => ({ steer: 0, throttle: 0, brake: 1, shiftUp: false, shiftDown: false });
+    g.hud.message = () => {};
+    g.recordsEnabled = false;
+    g.startSession({ ...g.sessionCfg, type: opts.type ?? 'libere', minutes: 0, laps, opponents: opts.opponents ?? 5, difficulty: opts.difficulty ?? 'medio' }, false);
+    // il pilota esce di scena (lontano dalla pista) per non intralciare
+    if (!opts.type || opts.type !== 'gara') {
+      g.playerEntity.vehicle.reset(100000, 100000, 0);
+    }
+    const dt = g.loop.fixedDt;
+    let t = 0, resets = 0;
+    const origReset = g.resetToTrack.bind(g);
+    // il pilota (fuori scena) non va rimesso in pista
+    g.resetToTrack = (e: any) => { if (e.isPlayer) return; resets++; origReset(e); };
+    const botsE = g.entities.filter((e: any) => !e.isPlayer);
+    try {
+      while (t < laps * 120 && botsE.some((e: any) => e.competitor.lapsDone < laps) && g.session.state !== 'finita') {
+        g.fixedUpdate(dt);
+        t += dt;
+      }
+    } finally {
+      g.input.read = origRead;
+      g.resetToTrack = origReset;
+      g.recordsEnabled = true;
+    }
+    const lines = botsE.map((e: any) => {
+      const laps2 = e.competitor.timing.laps.map((l: any) => l.time.toFixed(2) + (l.valid ? '' : '*')).join(' ');
+      return `${e.name.padEnd(14)} grip ${e.bot.skill.grip.toFixed(3)}  giri: ${laps2}`;
+    });
+    const out = [`simulati ${t.toFixed(0)} s, riposizionamenti bot: ${resets}  (* = giro non valido)`, ...lines].join('\n');
+    g.startSession(prevCfg, false);
+    return out;
+  };
+
+  (window as any).devTools = { autopilot, bots };
 }

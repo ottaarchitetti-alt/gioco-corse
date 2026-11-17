@@ -53,6 +53,43 @@ export async function loadCarRig(car: CarParams, paintColor: THREE.ColorRepresen
   return rigCar(scene, paintColor, source);
 }
 
+/**
+ * Copia del modello già montato (per i bot): stessa geometria, livrea di un altro colore.
+ * Le geometrie sono condivise, quindi 20 auto costano poco in memoria.
+ */
+export function cloneRig(src: CarRig, paintColor: THREE.ColorRepresentation): CarRig {
+  const root = src.root.clone(true);
+  const byName = (name: string) => root.getObjectByName(name) ?? null;
+  const paint = new THREE.Color(paintColor);
+  const cache = new Map<THREE.Material, THREE.Material>();
+  root.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const swap = (m: THREE.Material) => {
+      if (!m.name.toLowerCase().startsWith('paint')) return m;
+      if (!cache.has(m)) {
+        const c = (m as THREE.MeshStandardMaterial).clone();
+        c.color = paint.clone();
+        cache.set(m, c);
+      }
+      return cache.get(m)!;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+  });
+  const wheelPivots = WHEEL_NAMES.map((n) => byName(n + '_pivot') as THREE.Group);
+  return {
+    root,
+    body: byName('car_body') as THREE.Group,
+    wheelPivots,
+    wheelSpinners: wheelPivots.map((p) => p.children[0] as THREE.Group),
+    steeringWheel: src.steeringWheel ? (byName('steering_wheel')?.parent as THREE.Group) ?? null : null,
+    camCockpit: byName('cam_cockpit'),
+    camHood: byName('cam_hood'),
+    measured: src.measured,
+    source: src.source,
+  };
+}
+
 /** Cerca un oggetto per nome (senza distinguere maiuscole; accetta suffissi tipo ".001"). */
 function findByName(root: THREE.Object3D, name: string): THREE.Object3D | null {
   const target = name.toLowerCase();

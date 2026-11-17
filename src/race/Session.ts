@@ -11,6 +11,7 @@
  *   bandiera  → tempo scaduto / giri completati: ognuno finisce al prossimo passaggio
  *   finita    → risultati
  */
+import type { Difficulty } from '../ai/BotDriver';
 import { LapTiming, type TimingEvent } from './LapTiming';
 
 export type SessionType = 'libere' | 'qualifica' | 'gara';
@@ -22,7 +23,20 @@ export interface SessionConfig {
   minutes: number;
   /** Giri di gara */
   laps: number;
+  /** Numero di avversari bot (0–19) */
+  opponents: number;
+  difficulty: Difficulty;
+  /** Posizione di partenza del pilota in gara */
+  grid: GridMode;
 }
+
+export type GridMode = 'qualifica' | 'pole' | 'meta' | 'fondo';
+export const GRID_NAMES: Record<GridMode, string> = {
+  qualifica: 'Ordine della qualifica',
+  pole: 'In pole position',
+  meta: 'A metà griglia',
+  fondo: 'In fondo alla griglia',
+};
 
 export const SESSION_NAMES: Record<SessionType, string> = {
   libere: 'Prove libere',

@@ -1,7 +1,8 @@
 /**
  * Schermate a tutto schermo: avvio, pausa, aiuto comandi.
  */
-import { JUMP_START_PENALTY, SESSION_NAMES, type SessionConfig, type SessionType } from '../race/Session';
+import { DIFFICULTIES, type Difficulty } from '../ai/BotDriver';
+import { GRID_NAMES, JUMP_START_PENALTY, SESSION_NAMES, type GridMode, type SessionConfig, type SessionType } from '../race/Session';
 import { navigate } from './router';
 
 const CONTROLS = `
@@ -56,7 +57,9 @@ export class Overlay {
     carName: string,
     recordText: string,
     initial: SessionConfig,
+    hasQuali: boolean,
     onStart: (c: SessionConfig) => void,
+    onCalibrate: () => void,
   ): void {
     const cfg = { ...initial };
     const typeBtn = (t: SessionType) =>
@@ -69,13 +72,21 @@ export class Overlay {
           : `<label>Durata (minuti${cfg.type === 'libere' ? ', 0 = senza limite' : ''})
                <input type="number" min="${cfg.type === 'libere' ? 0 : 1}" max="180" value="${cfg.minutes}" data-f="minutes"></label>
              <p class="small">${cfg.type === 'qualifica' ? 'Conta il giro valido più veloce. Allo scadere del tempo puoi finire il giro in corso.' : 'Giri liberi per provare pista e assetto. Il fantasma del tuo record ti fa da riferimento (tasto F).'}</p>`;
+      const grids = (Object.keys(GRID_NAMES) as GridMode[]).filter((g) => g !== 'qualifica' || hasQuali);
+      if (!grids.includes(cfg.grid)) cfg.grid = 'meta';
+      const rivals = `
+        <label>Avversari <input type="number" min="0" max="19" value="${cfg.opponents}" data-f="opponents"></label>
+        <label>Difficoltà <select data-s="difficulty">${(Object.keys(DIFFICULTIES) as Difficulty[]).map((d) => `<option value="${d}" ${cfg.difficulty === d ? 'selected' : ''}>${DIFFICULTIES[d].label}</option>`).join('')}</select></label>
+        ${cfg.type === 'gara' ? `<label>Partenza <select data-s="grid">${grids.map((g) => `<option value="${g}" ${cfg.grid === g ? 'selected' : ''}>${GRID_NAMES[g]}</option>`).join('')}</select></label>` : ''}`;
       this.card.innerHTML = `
         <h1>${trackName}</h1>
         <p>${carName} · Record: <b>${recordText}</b></p>
         <h2>Sessione</h2>
         <div class="segs">${(['libere', 'qualifica', 'gara'] as SessionType[]).map(typeBtn).join('')}</div>
         <div class="form">${opts}</div>
-        <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-menu>◀ Menu</button></div>
+        <h2>Avversari</h2>
+        <div class="form">${rivals}</div>
+        <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-cal>🎮 Calibra volante</button><button class="secondary" data-menu>◀ Menu</button></div>
         <h2>Comandi</h2>${CONTROLS}`;
       this.card.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) =>
         b.addEventListener('click', () => {
@@ -88,9 +99,17 @@ export class Overlay {
         el.addEventListener('change', () => {
           const v = Math.max(0, Math.round(parseFloat(el.value) || 0));
           if (el.dataset.f === 'laps') cfg.laps = Math.max(1, v);
+          else if (el.dataset.f === 'opponents') cfg.opponents = Math.min(19, v);
           else cfg.minutes = cfg.type === 'libere' ? v : Math.max(1, v);
         }),
       );
+      this.card.querySelectorAll<HTMLSelectElement>('[data-s]').forEach((el) =>
+        el.addEventListener('change', () => {
+          if (el.dataset.s === 'difficulty') cfg.difficulty = el.value as Difficulty;
+          else cfg.grid = el.value as GridMode;
+        }),
+      );
+      this.card.querySelector('[data-cal]')!.addEventListener('click', onCalibrate);
       this.card.querySelector('[data-menu]')!.addEventListener('click', () => navigate('menu'));
       this.card.querySelector('[data-go]')!.addEventListener('click', () => {
         // legge anche un campo modificato senza aver premuto Invio

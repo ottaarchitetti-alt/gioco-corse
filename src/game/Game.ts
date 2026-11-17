@@ -1,22 +1,29 @@
 /**
  * Il "regista": carica auto e pista, crea tutti i sistemi e li collega.
  *
- * Gestisce le SESSIONI (prove libere, qualifica, gara): posizione di partenza,
- * cronometraggio, record personali, fantasma, risultati.
- * I concorrenti della sessione sono per ora solo il pilota; nella Fase 5 si
- * aggiungeranno i bot con lo stesso meccanismo (Competitor).
+ * In pista ci sono più AUTO (entità): il pilota e i bot. Ogni auto ha
+ * fisica (Vehicle), grafica (CarView), cronometraggio (Competitor) e,
+ * se è un bot, un pilota artificiale (BotDriver). Pilota e bot usano
+ * esattamente lo stesso codice di fisica.
+ *
+ * Gestisce le SESSIONI (prove libere, qualifica, gara): partenze, griglia,
+ * record personali, fantasma, risultati.
  */
+import { BotDriver, type Difficulty, type Traffic } from '../ai/BotDriver';
+import { RacingLine } from '../ai/RacingLine';
+import { makeRoster } from '../ai/roster';
 import { EngineSound } from '../audio/EngineSound';
 import { GameLoop } from '../core/GameLoop';
 import { formatLapTime, MS_TO_KMH } from '../core/math';
 import { loadJSON, saveJSON } from '../core/storage';
-import { InputManager, emptyInput } from '../input/InputManager';
+import { emptyInput, InputManager, type DriverInput } from '../input/InputManager';
 import { loadCar, type CarParams } from '../physics/CarParams';
+import { resolveCollisions } from '../physics/Collisions';
 import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../physics/Vehicle';
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import type { LapRecord, TimingEvent } from '../race/LapTiming';
 import { Competitor, Session, SESSION_NAMES, type SessionConfig, type SessionEvent } from '../race/Session';
-import { loadCarRig } from '../render/AssetManager';
+import { cloneRig, loadCarRig, type CarRig } from '../render/AssetManager';
 import { CameraRig } from '../render/CameraRig';
 import { CarView } from '../render/CarView';
 import { Renderer } from '../render/Renderer';
@@ -41,12 +48,35 @@ const SURFACES: Record<Surface['name'], Surface> = {
 };
 
 const DEFAULT_AIDS: DrivingAids = { abs: true, tc: true, autoShift: true, keyboardSteerAssist: true };
+/** I bot guidano come piloti GT veri: ABS, controllo di trazione e cambio automatico */
+const BOT_AIDS: DrivingAids = { abs: true, tc: true, autoShift: true, keyboardSteerAssist: false };
 const DEFAULT_SIM: SimSettings = { airTemp: 22, trackTemp: 32, wearMultiplier: 1, tyreBlankets: false };
-const DEFAULT_SESSION: SessionConfig = { type: 'libere', minutes: 0, laps: 5 };
+const DEFAULT_SESSION: SessionConfig = { type: 'libere', minutes: 0, laps: 5, opponents: 9, difficulty: 'medio', grid: 'meta' };
 /** Temperatura delle gomme montate con le termocoperte (°C) */
 const BLANKET_TEMP = 80;
 
 const fmtClock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+/** Un'auto in pista (pilota o bot). */
+interface CarEntity {
+  id: string;
+  name: string;
+  isPlayer: boolean;
+  vehicle: Vehicle;
+  view: CarView;
+  competitor: Competitor;
+  bot: BotDriver | null;
+  /** indici di ricerca veloce sulla pista e sulla corsia box */
+  wheelHints: number[];
+  pitHints: number[];
+  hint: number;
+  /** posizione sulla pista */
+  s: number;
+  d: number;
+  /** punto di partenza (per la partenza anticipata) */
+  startX: number;
+  startZ: number;
+}
 
 export class Game {
   private renderer!: Renderer;
@@ -58,21 +88,27 @@ export class Game {
   private prefs = loadJSON('prefs', { ghost: true });
   private graph!: TelemetryGraph;
   private car!: CarParams;
+  /** Copia "pulita" dell'auto per i bot (le regolazioni F2 valgono solo per te) */
+  private botCar!: CarParams;
+  private playerRig!: CarRig;
   private track!: TrackSpline;
-  private vehicle!: Vehicle;
-  private view!: CarView;
+  private line!: RacingLine;
   private cameras!: CameraRig;
   private hud!: Hud;
   private overlay!: Overlay;
   private debug!: DebugPanel;
   private loop!: GameLoop;
 
+  // ---- Auto in pista ----
+  private entities: CarEntity[] = [];
+  private playerEntity!: CarEntity;
+
   // ---- Sessione ----
   private session!: Session;
-  private player!: Competitor;
-  /** Punto di partenza (per la partenza anticipata) */
-  private startPos = { x: 0, z: 0 };
   private resultsTimer = 0;
+  /** Ordine d'arrivo dell'ultima qualifica (id), per la griglia di gara */
+  private lastQualiOrder: string[] | null = null;
+  private contactCooldown = 0;
 
   // ---- Record e fantasma ----
   private recordKey = '';
@@ -85,12 +121,6 @@ export class Game {
   /** Settori del giro appena concluso, mostrati per qualche secondo nel giro nuovo */
   private lastLapShown: LapRecord | null = null;
 
-  /** Ultimo indice di campione pista per ogni ruota e per il baricentro (ricerca veloce). */
-  private wheelHints = [-1, -1, -1, -1];
-  private pitHints = [-1, -1, -1, -1];
-  private carHint = -1;
-  private carS = 0;
-  private carD = 0;
   private telemetryTimer = 0;
   private lastSteer = 0;
   private started = false;
@@ -102,7 +132,17 @@ export class Game {
    * @param trackId pista da caricare (inclusa o creata con l'editor)
    * @param fromEditor true se si arriva dall'editor: nel menu di pausa c'è "Torna all'editor"
    */
-  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false) {}
+  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false) {
+    this.sessionCfg = { ...DEFAULT_SESSION, ...this.sessionCfg };
+  }
+
+  // scorciatoie
+  private get vehicle(): Vehicle {
+    return this.playerEntity.vehicle;
+  }
+  private get player(): Competitor {
+    return this.playerEntity.competitor;
+  }
 
   async init(): Promise<void> {
     this.overlay = new Overlay(this.uiEl);
@@ -120,13 +160,15 @@ export class Game {
       Object.assign(car, rig.measured);
       console.info('[Game] Geometria letta dal modello:', rig.measured);
     }
-    this.renderer.scene.add(rig.root);
+    this.botCar = structuredClone(car);
+    this.playerRig = rig;
     this.ghost = new GhostPlayer(rig.root);
     this.renderer.scene.add(this.ghost.object);
 
-    // ---- Pista ----
+    // ---- Pista e traiettoria ideale (per i bot) ----
     this.track = new TrackSpline(trackData);
     this.renderer.scene.add(buildTrackMesh(this.track, this.renderer.maxAnisotropy));
+    this.line = new RacingLine(this.track);
 
     // ---- Record personale (legato alla geometria: se modifichi la pista riparte da zero) ----
     this.recordKey = RecordStore.key(`${trackData.id}_${geometryHash(trackData)}`, car.id);
@@ -137,13 +179,12 @@ export class Game {
     }
     this.bestSectorsEver = this.record ? [...this.record.bestSectors] : [];
 
-    // ---- Fisica ----
-    this.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(i, x, z));
-    this.applySim();
+    // ---- Auto del pilota ----
+    this.playerEntity = this.createEntity('pilota', 'Tu', true, car, rig);
+    this.renderer.scene.add(rig.root);
 
-    // ---- Vista, HUD ----
-    this.view = new CarView(rig, this.vehicle);
-    this.cameras = new CameraRig(this.renderer.camera, this.view);
+    // ---- HUD e pannelli ----
+    this.cameras = new CameraRig(this.renderer.camera, this.playerEntity.view);
     this.hud = new Hud(this.uiEl);
     this.graph = new TelemetryGraph(this.uiEl);
     this.debug = new DebugPanel(car, this.aids, this.sim, {
@@ -153,9 +194,10 @@ export class Game {
         this.applySim();
       },
       onNewTyres: () => {
-        this.fitNewTyres();
+        this.fitNewTyres(this.vehicle);
         this.hud.message(`Gomme nuove: ${this.vehicle.tires[0].compound.name}`, 2);
       },
+      onCalibrateWheel: () => void this.openWheelCalibration(),
     }, this.input, this.sound);
 
     // ---- Loop ----
@@ -170,6 +212,18 @@ export class Game {
     this.showSessionChoice();
   }
 
+  /** Crea un'auto (fisica + grafica). Il cronometraggio viene creato a ogni sessione. */
+  private createEntity(id: string, name: string, isPlayer: boolean, car: CarParams, rig: CarRig): CarEntity {
+    const e = {
+      id, name, isPlayer, bot: null,
+      wheelHints: [-1, -1, -1, -1], pitHints: [-1, -1, -1, -1], hint: -1, s: 0, d: 0, startX: 0, startZ: 0,
+    } as unknown as CarEntity;
+    e.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(e, i, x, z));
+    e.view = new CarView(rig, e.vehicle);
+    this.applySimTo(e.vehicle);
+    return e;
+  }
+
   // =====================================================================
   //  SESSIONI
   // =====================================================================
@@ -180,12 +234,14 @@ export class Game {
       this.track.data.name, this.car.name,
       this.record ? formatLapTime(this.record.lapTime) : 'nessuno',
       this.sessionCfg,
+      this.lastQualiOrder !== null,
       (cfg) => {
         this.started = true;
         this.sound.start();
         this.sound.setPaused(false);
         this.startSession(cfg);
       },
+      () => void this.openWheelCalibration(),
     );
   }
 
@@ -194,19 +250,29 @@ export class Game {
     this.sessionCfg = { ...cfg };
     saveJSON('session', this.sessionCfg);
     this.session = new Session(this.sessionCfg, this.track.length, (e) => this.onSessionEvent(e));
-    this.player = new Competitor('pilota', 'Tu', true, this.track.length, this.track.sectorS, (c, e) => this.onTimingEvent(c, e));
-    this.session.add(this.player);
+
+    // ---- Auto: il pilota + i bot di questa sessione ----
+    for (const e of this.entities) if (!e.isPlayer) this.renderer.scene.remove(e.view.rig.root);
+    this.entities = [this.playerEntity];
+    const roster = makeRoster(cfg.opponents, cfg.difficulty as Difficulty);
+    for (const b of roster) {
+      const rig = cloneRig(this.playerRig, b.color);
+      const e = this.createEntity(b.id, b.name, false, this.botCar, rig);
+      e.bot = new BotDriver(this.line, e.vehicle, b.skill);
+      this.renderer.scene.add(rig.root);
+      this.entities.push(e);
+    }
+    for (const e of this.entities) {
+      e.competitor = new Competitor(e.id, e.name, e.isPlayer, this.track.length, this.track.sectorS, (c, ev) => this.onTimingEvent(c, ev));
+      this.session.add(e.competitor);
+      this.fitNewTyres(e.vehicle);
+    }
+
     this.sessionGhost = null;
     this.lastLapShown = null;
     this.resultsTimer = 0;
     this.ghostRec.restart();
-    this.fitNewTyres();
-
-    // Partenza: in gara dalla griglia; in prova/qualifica dai box (se ci sono)
-    if (this.session.isRace) this.placeOnGrid(0);
-    else if (!this.placeInPits()) this.placeOnTrack(this.track.length - 150);
-    this.startPos = { x: this.vehicle.x, z: this.vehicle.z };
-    this.player.timing.resetPosition();
+    this.placeForSession();
 
     this.hud?.showLapList(null);
     this.hud?.clearMessage();
@@ -215,6 +281,46 @@ export class Game {
       this.overlay.hide();
       this.loop.paused = false;
       this.hud.message(this.session.isRace ? 'Gara: attendi lo spegnimento dei semafori' : `${this.session.name}: buon lavoro!`, 3);
+    }
+  }
+
+  /** Posiziona tutte le auto per l'inizio della sessione. */
+  private placeForSession(): void {
+    const bots = this.entities.filter((e) => !e.isPlayer);
+    if (this.session.isRace) {
+      // ordine di griglia
+      let order: CarEntity[];
+      const bySkill = [...bots].sort((a, b) => b.bot!.skill.grip - a.bot!.skill.grip);
+      const mode = this.sessionCfg.grid;
+      if (mode === 'qualifica' && this.lastQualiOrder) {
+        const pos = (e: CarEntity) => {
+          const i = this.lastQualiOrder!.indexOf(e.id);
+          return i < 0 ? 999 : i;
+        };
+        order = [...this.entities].sort((a, b) => pos(a) - pos(b));
+      } else if (mode === 'pole') order = [this.playerEntity, ...bySkill];
+      else if (mode === 'fondo') order = [...bySkill, this.playerEntity];
+      else {
+        const mid = Math.floor(bySkill.length / 2);
+        order = [...bySkill.slice(0, mid), this.playerEntity, ...bySkill.slice(mid)];
+      }
+      order.forEach((e, k) => {
+        // se i posti in griglia non bastano, le auto in più si mettono più indietro
+        if (k < this.track.grid.length) {
+          const g = this.track.grid[k];
+          this.placeAt(e, g.x, g.z, g.heading);
+        } else this.placeOnLine(e, this.track.length - 6 - k * 8);
+      });
+    } else {
+      // prove/qualifica: tu ai box (se ci sono), i bot sparsi lungo la pista
+      if (!this.placeInPits(this.playerEntity)) this.placeOnTrack(this.playerEntity, this.track.length - 150);
+      const L = this.track.length;
+      bots.forEach((e, k) => this.placeOnLine(e, L * 0.12 + (k * L * 0.85) / Math.max(1, bots.length)));
+    }
+    for (const e of this.entities) {
+      e.startX = e.vehicle.x;
+      e.startZ = e.vehicle.z;
+      e.competitor.timing.resetPosition();
     }
   }
 
@@ -230,15 +336,17 @@ export class Game {
         this.hud.message(this.session.isRace ? '🏁 Bandiera a scacchi' : '🏁 Tempo scaduto: completa il giro', 4);
         break;
       case 'finished':
-        if (e.c.isPlayer) this.hud.message('🏁 Traguardo!', 3);
+        if (e.c.isPlayer) this.hud.message(`🏁 Traguardo! Posizione ${e.c.position}`, 3);
         break;
       case 'end':
+        if (this.session.config.type === 'qualifica') this.lastQualiOrder = this.session.standings().map((c) => c.id);
         this.resultsTimer = 2.5; // risultati dopo qualche secondo
         break;
     }
   }
 
   private onTimingEvent(c: Competitor, e: TimingEvent): void {
+    if (e.type === 'lineCrossed') this.session.onLineCrossed(c);
     if (!c.isPlayer) return;
     switch (e.type) {
       case 'invalidated':
@@ -260,7 +368,6 @@ export class Game {
         break;
       }
       case 'lineCrossed':
-        this.session.onLineCrossed(c);
         this.ghostRec.restart();
         break;
     }
@@ -336,7 +443,7 @@ export class Game {
       <h2>I tuoi giri</h2>${this.lapTableHtml(true)}`;
     const actions: { label: string; act: () => void; primary?: boolean }[] = [];
     if (s.config.type === 'qualifica') {
-      actions.push({ label: '▶ Vai in gara', primary: true, act: () => this.startSession({ ...this.sessionCfg, type: 'gara' }) });
+      actions.push({ label: '▶ Vai in gara', primary: true, act: () => this.startSession({ ...this.sessionCfg, type: 'gara', grid: 'qualifica' }) });
     }
     actions.push(
       { label: '↻ Ripeti sessione', primary: s.config.type !== 'qualifica', act: () => this.startSession(this.sessionCfg) },
@@ -373,68 +480,77 @@ export class Game {
   //  POSIZIONAMENTO
   // =====================================================================
 
-  /** Mette l'auto ferma in un posto della griglia di partenza (0 = pole position). */
-  private placeOnGrid(slot: number): void {
-    const g = this.track.grid[slot];
-    if (!g) return this.placeOnTrack(this.track.length - 30);
-    this.placeAt(g.x, g.z, g.heading);
-  }
-
   /** Davanti al box più vicino all'uscita della corsia box. */
-  private placeInPits(): boolean {
+  private placeInPits(e: CarEntity): boolean {
     const pit = this.track.pit;
     if (!pit || !pit.stalls.length) return false;
     const st = pit.stalls.reduce((a, b) => (b.s > a.s ? b : a));
-    this.placeAt(st.x, st.z, st.heading);
+    this.placeAt(e, st.x, st.z, st.heading);
     return true;
   }
 
-  /** Mette l'auto ferma sulla linea centrale alla distanza s. */
-  private placeOnTrack(s: number): void {
+  /** Ferma sulla linea centrale alla distanza s. */
+  private placeOnTrack(e: CarEntity, s: number): void {
     const smp = this.track.atS(s);
-    this.placeAt(smp.x, smp.z, smp.heading);
+    this.placeAt(e, smp.x, smp.z, smp.heading);
   }
 
-  private placeAt(x: number, z: number, heading: number): void {
-    this.vehicle.reset(x, z, heading);
-    const idx = this.track.project(x, z).index;
-    this.wheelHints = [idx, idx, idx, idx];
-    this.pitHints = [-1, -1, -1, -1];
-    this.carHint = idx;
-    this.carS = this.track.project(x, z).s;
+  /** Ferma sulla traiettoria ideale alla distanza s (per i bot). */
+  private placeOnLine(e: CarEntity, s: number): void {
+    const L = this.track.length, n = this.line.n;
+    const i = Math.round((((s % L) + L) % L) / (L / n)) % n;
+    const smp = this.track.samples[i];
+    this.placeAt(e, this.line.x[i], this.line.z[i], smp.heading);
   }
 
-  private resetToTrack(): void {
-    this.placeOnTrack(this.carS);
-    this.player.timing.invalidate('auto riposizionata');
-    this.player.timing.resetPosition();
+  private placeAt(e: CarEntity, x: number, z: number, heading: number): void {
+    e.vehicle.reset(x, z, heading);
+    const p = this.track.project(x, z);
+    e.wheelHints = [p.index, p.index, p.index, p.index];
+    e.pitHints = [-1, -1, -1, -1];
+    e.hint = p.index;
+    e.s = p.s;
+    e.d = p.d;
+  }
+
+  /** Rimette in pista (tasto R, o bot bloccato): il giro non vale più. */
+  private resetToTrack(e: CarEntity): void {
+    if (e.isPlayer) this.placeOnTrack(e, e.s);
+    else this.placeOnLine(e, e.s);
+    e.competitor.timing.invalidate('auto riposizionata');
+    e.competitor.timing.resetPosition();
   }
 
   // =====================================================================
   //  FISICA E AMBIENTE
   // =====================================================================
 
-  /** Condizioni ambientali → fisica delle gomme. */
+  private applySimTo(v: Vehicle): void {
+    v.env.airTemp = this.sim.airTemp;
+    v.env.trackTemp = this.sim.trackTemp;
+    v.env.wearMultiplier = this.sim.wearMultiplier;
+  }
+
+  /** Condizioni ambientali → fisica delle gomme di tutte le auto. */
   private applySim(): void {
-    this.vehicle.env.airTemp = this.sim.airTemp;
-    this.vehicle.env.trackTemp = this.sim.trackTemp;
-    this.vehicle.env.wearMultiplier = this.sim.wearMultiplier;
+    for (const e of this.entities) this.applySimTo(e.vehicle);
+    if (this.playerEntity) this.applySimTo(this.playerEntity.vehicle);
   }
 
   /** Monta gomme nuove secondo l'assetto (mescola e pressioni a freddo). */
-  private fitNewTyres(): void {
-    const s = this.car.setup;
+  private fitNewTyres(v: Vehicle): void {
+    const s = v.car.setup;
     const start = this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3;
-    this.vehicle.fitTyres(s.compound, s.pressureFront, s.pressureRear, start);
+    v.fitTyres(s.compound, s.pressureFront, s.pressureRear, start);
   }
 
   /**
    * Cosa c'è sotto una ruota: asfalto, cordolo o erba (dalla distanza dal centro pista)
    * e l'altezza del suolo: i cordoli sono rialzati e "a dente", l'erba è irregolare.
    */
-  private groundAt(i: number, x: number, z: number): GroundContact {
-    const p = this.track.project(x, z, this.wheelHints[i]);
-    this.wheelHints[i] = p.index;
+  private groundAt(e: CarEntity, i: number, x: number, z: number): GroundContact {
+    const p = this.track.project(x, z, e.wheelHints[i]);
+    e.wheelHints[i] = p.index;
     const half = p.sample.width / 2;
     const ad = Math.abs(p.d);
     if (ad <= half) return { surface: SURFACES.asfalto, height: 0 };
@@ -447,8 +563,8 @@ export class Game {
     // corsia box: asfalto anche fuori dalla carreggiata della pista
     const pit = this.track.pit;
     if (pit) {
-      const q = pit.project(x, z, this.pitHints[i]);
-      this.pitHints[i] = q.index;
+      const q = pit.project(x, z, e.pitHints[i]);
+      e.pitHints[i] = q.index;
       if (q.s > -3 && q.s < pit.length + 3 && Math.abs(q.d) <= pit.data.width / 2) return { surface: SURFACES.asfalto, height: 0 };
     }
     const bumps = 0.012 * (Math.sin(p.s * 0.9) + Math.sin(p.d * 1.7 + p.s * 0.31)) * 0.5;
@@ -457,22 +573,59 @@ export class Game {
 
   private fixedUpdate(dt: number): void {
     const finished = this.session.state === 'finita';
-    // a sessione finita il pilota non guida più (l'auto rallenta da sola)
-    const input = finished ? { ...emptyInput(), brake: 0.3 } : this.input.read(dt, this.vehicle.speed, this.aids.keyboardSteerAssist);
-    this.lastSteer = input.steer;
-    this.vehicle.step(dt, input, this.aids);
+    const hold = this.session.state === 'semaforo';
 
-    const p = this.track.project(this.vehicle.x, this.vehicle.z, this.carHint);
-    this.carHint = p.index;
-    this.carS = p.s;
-    this.carD = p.d;
-    const allOff = this.vehicle.surfaces.every((s) => s.name === 'erba');
-    this.player.timing.update(dt, p.s, allOff);
-    if (this.player.timing.lap > 0) this.ghostRec.sample(this.player.timing.current, this.vehicle.x, this.vehicle.z, this.vehicle.yaw);
-    this.session.update(dt, () => Math.hypot(this.vehicle.x - this.startPos.x, this.vehicle.z - this.startPos.z));
+    // ---- 1) comandi e fisica di ogni auto ----
+    const traffic: Traffic[] = this.entities.map((e) => ({ s: e.s, d: e.d, speed: e.vehicle.speed }));
+    this.entities.forEach((e, k) => {
+      let input: DriverInput;
+      if (e.isPlayer) {
+        // a sessione finita il pilota non guida più (l'auto rallenta da sola)
+        input = finished ? { ...emptyInput(), brake: 0.3 } : this.input.read(dt, e.vehicle.speed, this.aids.keyboardSteerAssist);
+        this.lastSteer = input.steer;
+      } else {
+        const others = traffic.filter((_, j) => j !== k);
+        const cmd = e.bot!.drive(dt, e.s, e.d, others, hold);
+        // i bot che hanno finito proseguono piano (giro di rientro)
+        input = e.competitor.finished || finished ? { ...cmd, throttle: Math.min(cmd.throttle, 0.25) } : cmd;
+      }
+      e.vehicle.step(dt, input, e.isPlayer ? this.aids : BOT_AIDS);
+    });
 
-    // Rete di sicurezza: troppo lontani dalla pista → si torna in pista
-    if (Math.abs(p.d) > 120) this.resetToTrack();
+    // ---- 2) collisioni ----
+    const hits = resolveCollisions(this.entities.map((e) => e.vehicle));
+    this.contactCooldown -= dt;
+    for (const h of hits) {
+      if ((h.a === this.vehicle || h.b === this.vehicle) && h.speed > 2 && this.contactCooldown <= 0) {
+        this.hud.message('Contatto!', 1);
+        this.contactCooldown = 1;
+      }
+    }
+
+    // ---- 3) posizione in pista, cronometraggio, sicurezza ----
+    for (const e of this.entities) {
+      const p = this.track.project(e.vehicle.x, e.vehicle.z, e.hint);
+      e.hint = p.index;
+      e.s = p.s;
+      e.d = p.d;
+      const allOff = e.vehicle.surfaces.every((s) => s.name === 'erba');
+      e.competitor.timing.update(dt, p.s, allOff);
+      if (e.isPlayer) {
+        if (Math.abs(p.d) > 120) this.resetToTrack(e); // rete di sicurezza
+      } else if (!hold && (Math.abs(p.d) > 35 || e.bot!.stuckTime > 4)) {
+        // bot finito lontano o bloccato: torna in pista
+        this.resetToTrack(e);
+        e.bot!.stuckTime = 0;
+      }
+    }
+    const t = this.player.timing;
+    if (t.lap > 0) this.ghostRec.sample(t.current, this.vehicle.x, this.vehicle.z, this.vehicle.yaw);
+
+    const byComp = new Map(this.entities.map((e) => [e.competitor, e]));
+    this.session.update(dt, (c) => {
+      const e = byComp.get(c)!;
+      return Math.hypot(e.vehicle.x - e.startX, e.vehicle.z - e.startZ);
+    });
   }
 
   // =====================================================================
@@ -487,7 +640,7 @@ export class Game {
           this.hud.message(`Telecamera: ${this.cameras.next()}`, 1);
           break;
         case 'reset':
-          if (this.session.state !== 'semaforo') this.resetToTrack();
+          if (this.session.state !== 'semaforo') this.resetToTrack(this.playerEntity);
           break;
         case 'pause':
           if (this.session.state !== 'finita' || !this.loop.paused) this.togglePause();
@@ -535,10 +688,17 @@ export class Game {
         { label: '↻ Ricomincia sessione', act: () => this.startSession(this.sessionCfg) },
         { label: '🏁 Termina e vedi risultati', act: () => this.endSessionEarly() },
         { label: 'Cambia sessione…', act: () => this.showSessionChoice() },
+        { label: '🎮 Calibra volante', act: () => void this.openWheelCalibration() },
         ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
         { label: 'Menu principale', act: () => navigate('menu') },
       ]);
     }
+  }
+
+  /** Calibrazione guidata del volante (sopra qualsiasi schermata). */
+  private async openWheelCalibration(): Promise<void> {
+    const { WheelCalibration } = await import('../input/WheelCalibration');
+    new WheelCalibration(this.input).open();
   }
 
   // =====================================================================
@@ -551,7 +711,7 @@ export class Game {
     if (s.state === 'semaforo') info = 'Partenza';
     else if (s.state === 'bandiera') info = '🏁 Bandiera';
     else if (s.state === 'finita') info = 'Finita';
-    else if (s.isRace) info = `Giro ${Math.min(Math.max(t.lap, 1), s.config.laps)}/${s.config.laps}`;
+    else if (s.isRace) info = `Giro ${Math.min(Math.max(s.leader?.timing.lap ?? 1, 1), s.config.laps)}/${s.config.laps}`;
     else if (s.timeLeft !== null) info = fmtClock(s.timeLeft);
     else info = fmtClock(s.clock);
 
@@ -567,7 +727,7 @@ export class Game {
       total: s.competitors.length,
       lap: t.lap,
       current: t.current,
-      delta: s.isRace ? null : t.deltaAt(this.carS, ref.trace),
+      delta: s.isRace ? null : t.deltaAt(this.playerEntity.s, ref.trace),
       deltaRef: ref.label,
       valid: t.valid,
       lastLap: t.laps.length ? t.laps[t.laps.length - 1].time : null,
@@ -580,9 +740,9 @@ export class Game {
   private render(alpha: number, frameDt: number): void {
     this.handleActions();
     const v = this.vehicle;
-    this.view.update(alpha);
+    for (const e of this.entities) e.view.update(alpha);
     this.cameras.update(frameDt, v.speed);
-    this.renderer.followShadows(this.view.position);
+    this.renderer.followShadows(this.playerEntity.view.position);
 
     if (this.resultsTimer > 0) {
       this.resultsTimer -= frameDt;
@@ -647,6 +807,7 @@ export class Game {
     const col = (vals: (string | number)[]) => vals.map((x) => String(x).padStart(8)).join('');
     const t = v.tires;
     const g = 9.81;
+    const pe = this.playerEntity;
     return [
       `${''.padEnd(14)}${col(['ANT SX', 'ANT DX', 'POST SX', 'POST DX'])}`,
       `${'Carico (N)'.padEnd(14)}${col(t.map((x) => x.load.toFixed(0)))}`,
@@ -666,7 +827,7 @@ export class Game {
       `Differenziale: trasferisce ${v.drivetrain.diffTransfer.toFixed(0)} Nm`,
       `Imbardata ${((v.yawRate * 180) / Math.PI).toFixed(1)} °/s   v.lat ${v.vLat.toFixed(2)} m/s`,
       `Coppia motore ${v.drivetrain.engineTorque.toFixed(0)} Nm${v.drivetrain.clutchSlipping ? '  (frizione)' : ''}`,
-      `Pista s ${this.carS.toFixed(0)} / ${this.track.length.toFixed(0)} m   d ${this.carD.toFixed(1)} m`,
+      `Pista s ${pe.s.toFixed(0)} / ${this.track.length.toFixed(0)} m   d ${pe.d.toFixed(1)} m`,
     ].join('\n');
   }
 }

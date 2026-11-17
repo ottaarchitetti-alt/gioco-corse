@@ -16,7 +16,17 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: Fase 5 completata
+## Stato: Fase 6 completata
+- Scia aerodinamica: dietro un'altra auto meno resistenza (più velocità) e meno
+  deportanza (meno aderenza in curva); HUD "In scia"
+- Bot in corpo a corpo: sorpasso dal lato con più spazio (preferendo l'interno),
+  in scia e in staccata, spazio all'auto affiancata, una sola mossa in difesa
+- Errori dei bot: frenata lunga, bloccaggio senza ABS, troppo gas in uscita
+  (più probabili ai livelli bassi, sotto pressione, in sorpasso, con gomme usurate)
+- Bandiere gialla (auto ferma/fuori più avanti) e blu (doppiaggio): i bot rallentano
+  o lasciano passare, l'HUD le mostra al pilota
+
+## Fase 5
 - Bot IA (fino a 19): traiettoria ideale calcolata in automatico su qualsiasi pista,
   profilo di velocità da aderenza/potenza/deportanza, stessi comandi e stessa fisica
   del pilota, 4 livelli (facile ~60 s, medio ~58, difficile ~56, esperto ~54,5 s

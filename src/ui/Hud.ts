@@ -44,6 +44,10 @@ export interface HudData {
   standings: StandingRow[];
   /** Luci del semaforo accese (0..5), −1 = semaforo nascosto */
   lights: number;
+  /** Bandiera da mostrare */
+  flag: 'gialla' | 'blu' | null;
+  /** Sei nella scia di un'altra auto */
+  draft: boolean;
   throttle: number;
   brake: number;
   steer: number;
@@ -91,6 +95,7 @@ export class Hud {
   private standings: HTMLDivElement;
   private startLights: HTMLDivElement;
   readonly lapList: HTMLDivElement;
+  private flag: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     this.laps = h('hud-panel hud-laps');
@@ -110,8 +115,9 @@ export class Hud {
     this.standings = h('hud-panel hud-standings');
     this.startLights = h('hud-panel hud-lights', '<span></span>'.repeat(5));
     this.lapList = h('hud-panel hud-laplist mono');
+    this.flag = h('hud-panel hud-flag');
     this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div>`);
-    root.append(this.laps, this.standings, this.startLights, this.lapList, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -138,6 +144,11 @@ export class Hud {
     this.renderStandings(d.standings);
     this.startLights.style.display = d.lights >= 0 ? 'flex' : 'none';
     this.startLights.querySelectorAll('span').forEach((l, i) => l.classList.toggle('on', i < d.lights));
+    const flagHtml = d.flag === 'blu'
+      ? '<span class="f blu"></span> Bandiera blu: lascia passare'
+      : d.flag === 'gialla' ? '<span class="f gialla"></span> Bandiera gialla: rallenta' : d.draft ? '💨 In scia' : '';
+    this.flag.style.display = flagHtml ? '' : 'none';
+    if (this.flag.innerHTML !== flagHtml) this.flag.innerHTML = flagHtml;
 
     (this.dash.querySelector('.speed') as HTMLElement).textContent = Math.round(d.speedKmh).toString();
     (this.dash.querySelector('.gear') as HTMLElement).textContent = d.gear < 0 ? 'R' : d.gear === 0 ? 'N' : String(d.gear);

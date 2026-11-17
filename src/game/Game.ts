@@ -50,6 +50,10 @@ const SURFACES: Record<Surface['name'], Surface> = {
 const DEFAULT_AIDS: DrivingAids = { abs: true, tc: true, autoShift: true, keyboardSteerAssist: true };
 /** I bot guidano come piloti GT veri: ABS, controllo di trazione e cambio automatico */
 const BOT_AIDS: DrivingAids = { abs: true, tc: true, autoShift: true, keyboardSteerAssist: false };
+/** Durante un errore di "bloccaggio" il bot frena senza ABS */
+const BOT_AIDS_NO_ABS: DrivingAids = { ...BOT_AIDS, abs: false };
+/** Distanza (m) entro cui si sente la scia dell'auto davanti */
+const DRAFT_RANGE = 40;
 const DEFAULT_SIM: SimSettings = { airTemp: 22, trackTemp: 32, wearMultiplier: 1, tyreBlankets: false };
 const DEFAULT_SESSION: SessionConfig = { type: 'libere', minutes: 0, laps: 5, opponents: 9, difficulty: 'medio', grid: 'meta' };
 /** Temperatura delle gomme montate con le termocoperte (°C) */
@@ -109,6 +113,8 @@ export class Game {
   /** Ordine d'arrivo dell'ultima qualifica (id), per la griglia di gara */
   private lastQualiOrder: string[] | null = null;
   private contactCooldown = 0;
+  /** Contatti tra auto (velocità d'urto > 2 m/s) dall'avvio: per statistiche e test */
+  contactCount = 0;
 
   // ---- Record e fantasma ----
   private recordKey = '';
@@ -575,8 +581,16 @@ export class Game {
     const finished = this.session.state === 'finita';
     const hold = this.session.state === 'semaforo';
 
+    // ---- 0) chi vede cosa: traffico e scia ----
+    const L = this.track.length;
+    const traffic: Traffic[] = this.entities.map((e) => ({
+      s: e.s, d: e.d, speed: e.vehicle.speed,
+      total: e.competitor.timing.totalDistance,
+      offTrack: e.vehicle.surfaces.filter((x) => x.name === 'erba').length >= 2,
+    }));
+    this.updateSlipstream(L);
+
     // ---- 1) comandi e fisica di ogni auto ----
-    const traffic: Traffic[] = this.entities.map((e) => ({ s: e.s, d: e.d, speed: e.vehicle.speed }));
     this.entities.forEach((e, k) => {
       let input: DriverInput;
       if (e.isPlayer) {
@@ -585,17 +599,20 @@ export class Game {
         this.lastSteer = input.steer;
       } else {
         const others = traffic.filter((_, j) => j !== k);
-        const cmd = e.bot!.drive(dt, e.s, e.d, others, hold);
+        const cmd = e.bot!.drive(dt, e.s, e.d, e.competitor.timing.totalDistance, others, hold);
         // i bot che hanno finito proseguono piano (giro di rientro)
         input = e.competitor.finished || finished ? { ...cmd, throttle: Math.min(cmd.throttle, 0.25) } : cmd;
       }
-      e.vehicle.step(dt, input, e.isPlayer ? this.aids : BOT_AIDS);
+      const aids = e.isPlayer ? this.aids : e.bot!.absOff ? BOT_AIDS_NO_ABS : BOT_AIDS;
+      e.vehicle.step(dt, input, aids);
     });
+    this.updateFlags(traffic, L);
 
     // ---- 2) collisioni ----
     const hits = resolveCollisions(this.entities.map((e) => e.vehicle));
     this.contactCooldown -= dt;
     for (const h of hits) {
+      if (h.speed > 2) this.contactCount++;
       if ((h.a === this.vehicle || h.b === this.vehicle) && h.speed > 2 && this.contactCooldown <= 0) {
         this.hud.message('Contatto!', 1);
         this.contactCooldown = 1;
@@ -626,6 +643,42 @@ export class Game {
       const e = byComp.get(c)!;
       return Math.hypot(e.vehicle.x - e.startX, e.vehicle.z - e.startZ);
     });
+  }
+
+  /**
+   * SCIA: chi segue da vicino un'altra auto (stessa linea, entro 40 m) ha meno
+   * resistenza dell'aria ma anche meno deportanza. Effetto massimo a pochi metri.
+   */
+  private updateSlipstream(L: number): void {
+    for (const e of this.entities) {
+      let f = 0;
+      for (const o of this.entities) {
+        if (o === e) continue;
+        let gap = o.s - e.s;
+        if (gap < -L / 2) gap += L;
+        if (gap > L / 2) gap -= L;
+        if (gap > 3 && gap < DRAFT_RANGE && Math.abs(o.d - e.d) < 2.2) f = Math.max(f, 1 - gap / DRAFT_RANGE);
+      }
+      e.vehicle.dragFactor = 1 - 0.35 * f;
+      e.vehicle.downforceFactor = 1 - 0.3 * f;
+    }
+  }
+
+  /** Bandiere per il pilota: gialla (auto ferma/fuori più avanti), blu (arriva chi ti doppia). */
+  private flags = { yellow: false, blue: false };
+  private updateFlags(traffic: Traffic[], L: number): void {
+    const me = this.playerEntity;
+    const myTotal = me.competitor.timing.totalDistance;
+    let yellow = false, blue = false;
+    traffic.forEach((o, j) => {
+      if (this.entities[j] === me) return;
+      let gap = o.s - me.s;
+      if (gap < -L / 2) gap += L;
+      if (gap > L / 2) gap -= L;
+      if (gap > 0 && gap < 250 && (o.offTrack || o.speed < 8) && this.session.state === 'corsa') yellow = true;
+      if (this.session.isRace && gap < 0 && gap > -70 && o.total > myTotal + L * 0.5) blue = true;
+    });
+    this.flags = { yellow, blue };
   }
 
   // =====================================================================
@@ -765,6 +818,8 @@ export class Game {
       timing: this.timingHud(),
       standings: this.session.standings().map((c) => ({ pos: c.position, name: c.name, gap: this.session.gap(c), player: c.isPlayer })),
       lights: this.session.state === 'semaforo' ? this.session.lights : -1,
+      flag: this.flags.blue ? 'blu' : this.flags.yellow ? 'gialla' : null,
+      draft: this.vehicle.dragFactor < 0.93,
       throttle: v.appliedThrottle,
       brake: v.appliedBrake,
       steer: this.lastSteer,

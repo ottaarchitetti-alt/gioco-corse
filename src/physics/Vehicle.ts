@@ -99,6 +99,14 @@ export class Vehicle {
   absActive = false;
   tcActive = false;
 
+  /**
+   * SCIA: dietro un'altra auto l'aria è già "aperta" → meno resistenza (più velocità
+   * in rettilineo) ma anche meno deportanza ("aria sporca" → meno aderenza in curva).
+   * 1 = aria libera. Li calcola Game in base alle auto vicine.
+   */
+  dragFactor = 1;
+  downforceFactor = 1;
+
   /** Condizioni ambientali (aria, asfalto, moltiplicatore usura): le imposta Game. */
   env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1 };
 
@@ -248,11 +256,13 @@ export class Vehicle {
 
     // ---------- Aerodinamica ----------
     if (this.speed > 0.01) {
-      const drag = dragForce(car, this.speed);
+      const drag = dragForce(car, this.speed) * this.dragFactor;
       fLong -= (drag * this.vLong) / this.speed;
       fLat -= (drag * this.vLat) / this.speed;
     }
     const aero = downforce(car, Math.max(0, this.vLong));
+    aero.front *= this.downforceFactor;
+    aero.rear *= this.downforceFactor;
 
     // ---------- Integrazione (Eulero semi-implicito) ----------
     const axLocal = fLong / m;

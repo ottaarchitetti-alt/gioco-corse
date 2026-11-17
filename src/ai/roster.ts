@@ -40,6 +40,8 @@ export function makeRoster(count: number, difficulty: Difficulty, seed = 1): Bot
         grip: Math.min(0.995, base.grip + spread),
         brake: Math.min(0.98, base.brake + spread * 0.8),
         inconsistency: base.inconsistency,
+        errorRate: base.errorRate * (0.7 + rnd() * 0.6),
+        aggression: Math.min(1, Math.max(0, base.aggression + (rnd() - 0.5) * 0.3)),
       },
     };
   });

@@ -99,19 +99,28 @@ export function installDevTools(game: any): void {
     g.recordsEnabled = false;
     g.startSession({ ...g.sessionCfg, type: opts.type ?? 'libere', minutes: 0, laps, opponents: opts.opponents ?? 5, difficulty: opts.difficulty ?? 'medio' }, false);
     // il pilota esce di scena (lontano dalla pista) per non intralciare
-    if (!opts.type || opts.type !== 'gara') {
-      g.playerEntity.vehicle.reset(100000, 100000, 0);
-    }
+    g.playerEntity.vehicle.reset(100000, 100000, 0);
     const dt = g.loop.fixedDt;
     let t = 0, resets = 0;
     const origReset = g.resetToTrack.bind(g);
     // il pilota (fuori scena) non va rimesso in pista
     g.resetToTrack = (e: any) => { if (e.isPlayer) return; resets++; origReset(e); };
     const botsE = g.entities.filter((e: any) => !e.isPlayer);
+    // sorpassi: cambi di posizione tra bot, contati ogni 3 secondi dopo il via (niente scambi momentanei)
+    let overtakes = 0, prevOrder: string[] = [];
+    const contacts0 = g.contactCount;
     try {
+      let acc = 0;
       while (t < laps * 120 && botsE.some((e: any) => e.competitor.lapsDone < laps) && g.session.state !== 'finita') {
         g.fixedUpdate(dt);
         t += dt;
+        acc += dt;
+        if (acc > 3 && g.session.state === 'corsa') {
+          acc = 0;
+          const order = g.session.standings().filter((c: any) => !c.isPlayer).map((c: any) => c.id);
+          if (prevOrder.length && t > 15) order.forEach((id: string, i: number) => { if (prevOrder.indexOf(id) > i) overtakes++; });
+          prevOrder = order;
+        }
       }
     } finally {
       g.input.read = origRead;
@@ -120,9 +129,9 @@ export function installDevTools(game: any): void {
     }
     const lines = botsE.map((e: any) => {
       const laps2 = e.competitor.timing.laps.map((l: any) => l.time.toFixed(2) + (l.valid ? '' : '*')).join(' ');
-      return `${e.name.padEnd(14)} grip ${e.bot.skill.grip.toFixed(3)}  giri: ${laps2}`;
+      return `${String(e.competitor.position).padStart(2)}. ${e.name.padEnd(14)} grip ${e.bot.skill.grip.toFixed(3)} errori ${e.bot.errors} giri: ${laps2}`;
     });
-    const out = [`simulati ${t.toFixed(0)} s, riposizionamenti bot: ${resets}  (* = giro non valido)`, ...lines].join('\n');
+    const out = [`simulati ${t.toFixed(0)} s, riposizionamenti bot: ${resets}, sorpassi: ${overtakes}, contatti: ${g.contactCount - contacts0}  (* = giro non valido)`, ...lines].join('\n');
     g.startSession(prevCfg, false);
     return out;
   };

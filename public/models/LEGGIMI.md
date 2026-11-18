@@ -47,6 +47,10 @@ La guida è a sinistra (+X), ma puoi mettere `cam_cockpit` dove vuoi.
 - Usa il **Principled BSDF** (diventa un materiale PBR glTF).
 - Il materiale chiamato **`paint`** (anche `paint.001` ecc.) viene ricolorato dal
   gioco: così i bot avranno livree diverse con lo stesso modello.
+- Facoltativi: il materiale **`accent`** (strisce, dettagli) riceve in automatico un
+  colore a contrasto (scuro sulle auto chiare, bianco sulle scure); il materiale
+  **`number`** riceve una texture con il numero di gara (un tondo bianco con il
+  numero nero): mettilo su un piano con UV da 0 a 1, ad esempio sulle portiere.
 - Texture: al massimo 2048×2048, meglio se in formato PNG/JPG.
 
 ## 6. Prima di esportare

@@ -307,7 +307,7 @@ export class Game {
     this.entities = [this.playerEntity];
     const roster = makeRoster(cfg.opponents, cfg.difficulty as Difficulty);
     for (const b of roster) {
-      const rig = cloneRig(this.playerRig, b.color);
+      const rig = cloneRig(this.playerRig, b.color, parseInt(b.id.replace('bot_', '')) + 2);
       const e = this.createEntity(b.id, b.name, false, this.botCar, rig);
       e.bot = new BotDriver(this.line, e.vehicle, b.skill);
       this.renderer.scene.add(rig.root);

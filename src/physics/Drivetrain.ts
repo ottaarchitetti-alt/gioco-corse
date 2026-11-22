@@ -171,7 +171,10 @@ export class Drivetrain {
       const omega = Math.max(Math.abs(wheelOmega), Math.abs(speedMs) / car.wheelRadius);
       const lowerRpm = (omega * this.ratio(this.gear - 1)) / RPM_TO_RADS;
       const threshold = brake > 0.1 ? 0.66 : 0.45;
-      if (this.rpm < car.maxRpm * threshold && lowerRpm < car.maxRpm * 0.92) {
+      // la prima è corta (quasi solo per partire): ci si scala solo sotto metà della sua velocità
+      // massima, altrimenti un filo di gas in curva fa partire il posteriore
+      const firstOk = this.gear !== 2 || lowerRpm < car.maxRpm * 0.55;
+      if (this.rpm < car.maxRpm * threshold && lowerRpm < car.maxRpm * 0.92 && firstOk) {
         this.shift(-1, wheelOmega, speedMs);
       }
     }

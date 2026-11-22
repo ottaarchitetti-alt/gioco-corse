@@ -97,6 +97,10 @@ export class BotDriver {
   stuckTime = 0;
   /** Da quanto l'auto è girata contromano (testacoda) */
   wrongWayTime = 0;
+  /** Posizione laterale al passo precedente (per capire se ci si allarga) */
+  private prevD: number | null = null;
+  /** Gas del passo precedente (il gas si apre in modo progressivo) */
+  private lastThrottle = 0;
   /** Bandiere viste in questo passo */
   flags = { yellow: false, blue: false };
 
@@ -151,6 +155,7 @@ export class BotDriver {
     this.lastS = s;
 
     if (hold) {
+      this.lastThrottle = 1; // partenza: il gas si dà subito (ci pensa la frizione)
       out.brake = 1;
       return out;
     }
@@ -170,7 +175,9 @@ export class BotDriver {
     }
     this.wrongWayTime = 0;
     const speed = Math.max(v.speed, 1);
-    const halfW = track.samples[idx].width / 2 - 1.2; // dove può stare il centro dell'auto
+    // dove può stare il centro dell'auto: mezza larghezza dell'auto + mezzo metro dal bordo
+    const edgeMargin = (v.car.collision?.halfWidth ?? 1.0) + 0.5;
+    const halfW = track.samples[idx].width / 2 - edgeMargin;
     const lineD = line.offset[idx];
 
     // =================== LETTURA DEL TRAFFICO ===================
@@ -308,8 +315,12 @@ export class BotDriver {
     const ti = (idx + Math.round(look / step)) % n;
     const ts = track.samples[ti];
     // il punto mirato resta dentro la carreggiata anche se lì la traiettoria è già vicina al bordo
-    const tHalf = ts.width / 2 - 1.2;
-    const tLat = clamp(line.offset[ti] + this.lane, -tHalf, tHalf);
+    const tHalf = ts.width / 2 - edgeMargin - 0.3; // un filo di margine: l'auto oscilla attorno al punto
+    // Lo spostamento `lane` è relativo alla traiettoria. Se è grande (sorpasso, difesa) conta la
+    // posizione reale in pista: dove la traiettoria attraversa la carreggiata, seguirla porterebbe
+    // il punto mirato sul bordo. Man mano che lo spostamento si riduce si torna sulla traiettoria.
+    const follow = clamp(1 - Math.abs(this.lane) / 4, 0, 1);
+    const tLat = clamp(lineD + this.lane + (line.offset[ti] - lineD) * follow, -tHalf, tHalf);
     const tx = ts.x + ts.nx * tLat - v.x, tz = ts.z + ts.nz * tLat - v.z;
     const sinY = Math.sin(v.yaw), cosY = Math.cos(v.yaw);
     const lz = tx * sinY + tz * cosY; // avanti
@@ -323,11 +334,36 @@ export class BotDriver {
     const beta = Math.atan2(v.vLat, Math.max(3, v.vLong));
     const sliding = Math.abs(beta) > 4 * RAD && v.speed > 8;
     if (sliding) delta += beta * 0.6;
-    delta += clamp((clamp(lineD + this.lane, -halfW, halfW) - d) * 0.004, -0.02, 0.02) * (v.speed > 5 ? 1 : 0);
-    // al bordo della carreggiata (es. gomme fredde, curva presa larga): sterza verso l'interno
+    // correzione dell'errore laterale rispetto alla traiettoria (più forte a bassa velocità, dove
+    // il punto mirato è vicino e un metro di errore conta di più)
+    const kCross = 0.012 * clamp(30 / Math.max(speed, 10), 0.35, 1.5);
+    delta += clamp((clamp(lineD + this.lane, -halfW, halfW) - d) * kCross, -0.04, 0.04) * (v.speed > 5 ? 1 : 0);
+    // al bordo della carreggiata (es. gomme fredde, uscita di curva in accelerazione): sterza
+    // verso l'interno. Interviene già un po' prima del limite se l'auto si sta allargando.
     const edgeOver = Math.abs(d) - halfW;
-    if (edgeOver > 0 && v.speed > 5) delta -= Math.sign(d) * Math.min(0.06, edgeOver * 0.03);
+    const dRate = this.prevD === null ? 0 : clamp((d - this.prevD) / dt, -20, 20);
+    this.prevD = d;
+    // Ci si avvicina al bordo con velocità laterale `out`: per fermarla prima del limite serve
+    // un'accelerazione laterale out²/(2·spazio) → curvatura in più = a / v² (come farebbe un pilota)
+    const outward = Math.sign(d) * dRate;
+    const room = Math.max(0.25, halfW + 0.3 - Math.abs(d));
+    const drifting = outward > 0.3 && edgeOver > -2.5 && v.speed > 5;
+    if (drifting) {
+      const kNeed = (outward * outward) / (2 * room) / Math.max(speed * speed, 25);
+      delta -= Math.sign(d) * Math.min(0.08, Math.atan(v.car.wheelbase * kNeed) * 1.2);
+    }
+    if (edgeOver > 0 && v.speed > 5) delta -= Math.sign(d) * Math.min(0.04, 0.01 + edgeOver * 0.03);
     const maxDelta = ((v.car.steeringLockDeg / 2) / v.car.steeringRatio) * RAD;
+    // niente sterzo oltre quello che le gomme possono dare: alla velocità attuale la curva più
+    // stretta possibile ha curvatura a_max / v² (aderenza + deportanza). Sterzare di più a
+    // 150 km/h (es. all'uscita di una curva con l'auto un po' storta) fa solo girare l'auto.
+    if (v.speed > 12) {
+      const aMax = v.car.tire.mu * (9.81 + v.downforceN / v.car.mass) * 1.05;
+      const kMax = aMax / (v.speed * v.speed);
+      // + angolo di deriva utile delle gomme; in derapata il controsterzo può crescere quanto serve
+      const deltaLim = Math.atan(v.car.wheelbase * kMax) + 0.07 + (sliding ? Math.abs(beta) : 0);
+      delta = clamp(delta, -deltaLim, deltaLim);
+    }
     const rate = 4 * dt;
     this.steer += clamp(clamp(delta / maxDelta, -1, 1) - this.steer, -rate, rate);
     out.steer = this.steer;
@@ -336,13 +372,24 @@ export class BotDriver {
     const ahead = (idx + Math.round((speed * 0.22) / step)) % n;
     const feel = v.tires.reduce((a, t) => a + t.gripFactor, 0) / 4;
     let vt = Math.min(this.target(ahead), this.target(idx) + 3) * Math.sqrt(Math.min(1, feel / 0.98));
-    // fuori traiettoria in curva il raggio è più stretto → più piano
-    const k = Math.abs(line.curvature[ahead]);
-    vt *= 1 - 0.06 * Math.min(1, Math.abs(this.lane) / 3) * Math.min(1, k * 120);
+    // fuori traiettoria il raggio cambia: all'interno di una curva è più stretto (in un tornante
+    // anche della metà) → velocità limite = v·√(R'/R), e bisogna frenare in tempo per arrivarci
+    if (Math.abs(this.lane) > 0.3) {
+      const brakeAcc = 11; // m/s², prudente (vale per GT e monoposto)
+      const look = Math.round(Math.max(40, speed * 1.6) / step);
+      for (let j = 0; j <= look; j += 2) {
+        const kj = line.curvature[(idx + j) % n];
+        if (Math.abs(kj) < 1 / 400) continue;
+        const R = 1 / Math.abs(kj);
+        const inside = this.lane * Math.sign(kj); // + = verso l'interno della curva
+        const f = inside > 0 ? Math.sqrt(Math.max(0.3, (R - inside) / R)) : 1 - 0.03 * Math.min(1, -inside / 3);
+        if (f >= 1) continue;
+        const vj = this.target(idx + j) * f;
+        vt = Math.min(vt, Math.sqrt(vj * vj + 2 * brakeAcc * j * step));
+      }
+    }
     // in sorpasso si stacca un filo più tardi (e si rischia di più)
     if (this.mode === 'sorpasso') vt *= 1 + 0.02 * this.skill.aggression;
-    // al bordo: si alza il piede finché l'auto non rientra
-    if (edgeOver > 0) vt = Math.min(vt, v.speed * (1 - Math.min(0.06, edgeOver * 0.04)));
     if (this.flags.yellow) vt *= 0.93;
     if (this.flags.blue) vt *= 0.95;
     if (wantAvoid !== null) vt = Math.min(vt, 22);
@@ -385,11 +432,23 @@ export class BotDriver {
       if (this.errTimer <= 0) this.errType = null;
     }
 
+    // al bordo (o quasi, allargandosi): si alza il piede, senza frenare (frenare mentre si sterza
+    // toglie aderenza all'avantreno e l'auto va ancora più larga)
+    if (edgeOver > 0 || (drifting && edgeOver > -0.5)) {
+      out.throttle = Math.min(out.throttle, edgeOver > 0 ? 0.2 : 0.45);
+      if (!braking) out.brake = Math.min(out.brake, 0.15);
+    }
     // il posteriore parte: via dal freno e gas dolce per ritrovare aderenza (come un pilota)
     if (sliding) {
       out.brake = Math.min(out.brake, 0.1);
       out.throttle = Math.min(out.throttle, 0.25);
     }
+
+    // gas progressivo, come un pilota: niente "on/off" (nelle marce basse, con tanta coppia,
+    // un colpo di gas in curva fa partire il posteriore)
+    const rise = (v.drivetrain.gear <= 2 ? 1.6 : 3.5) * dt;
+    out.throttle = Math.min(out.throttle, this.lastThrottle + rise);
+    this.lastThrottle = out.throttle;
 
     this.stuckTime = v.speed < 1.5 ? this.stuckTime + dt : 0;
     return out;

@@ -272,11 +272,14 @@ export class Vehicle {
 
       // ---- Rotazione della ruota ----
       let brakeTorque = car.maxBrakeTorque * input.brake * (isFront ? car.brakeBiasFront : 1 - car.brakeBiasFront) / 2;
+      let driveTorque = i === RL ? drive.torqueRL : i === RR ? drive.torqueRR : 0;
       if (aids.abs && tire.kappa < -car.tire.peakSlipRatio * 1.15 && this.speed > 3) {
-        brakeTorque *= 0.55; // ABS: rilascia la ruota che sta per bloccarsi
+        // ABS: la ruota sta per bloccarsi → il freno non supera la coppia che la gomma trasmette
+        // all'asfalto (così la ruota riprende a girare) e sulle posteriori si toglie il freno motore
+        brakeTorque = Math.min(brakeTorque * 0.55, Math.abs(f.fx * r) * 0.85);
+        if (driveTorque < 0) driveTorque = 0;
         this.absActive = true;
       }
-      const driveTorque = i === RL ? drive.torqueRL : i === RR ? drive.torqueRR : 0;
       const inertia = car.wheelInertia + (isFront ? 0 : drive.reflectedInertia);
       let omega = tire.omega + ((driveTorque - f.fx * r) / inertia) * dt;
       // Il freno si oppone alla rotazione ma non può farla girare al contrario

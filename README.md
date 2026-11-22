@@ -61,6 +61,13 @@ punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più v
   di 3 s; ogni pressione altri 3 s (fino a 20 s); premi l'acceleratore per ripartire. Il giro
   in corso non vale più.
 
+**ABS e bot più puliti.** L'ABS ora impedisce davvero il bloccaggio delle ruote (prima, con i
+freni potenti della monoposto, le ruote anteriori si bloccavano anche con l'ABS attivo); sulle
+posteriori toglie anche il freno motore. I bot non sterzano oltre l'aderenza disponibile (ma
+controsterzano quanto serve), danno gas in modo progressivo, correggono in anticipo quando si
+allargano verso il bordo, in sorpasso guardano la posizione reale in pista e in un tornante
+rallentano se sono all'interno. Prova degli incidenti: `devTools.incidenti(6)` nella console.
+
 **Tempi indicativi dei bot "esperto"** con la monoposto: Monza ~1'30", con la GT
 all'Anello di prova ~53–54 s in "medio".
 

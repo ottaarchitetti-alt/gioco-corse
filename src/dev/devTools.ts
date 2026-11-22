@@ -136,5 +136,58 @@ export function installDevTools(game: any): void {
     return out;
   };
 
-  (window as any).devTools = { autopilot, bots };
+  /**
+   * Incidenti dei bot in gara: per ogni bot il primo momento in cui perde il controllo
+   * (deriva > 15°) o mette due ruote sull'erba, più riposizionamenti e contatti.
+   *   devTools.incidenti(4)          → 4 gare da 100 s con 7 bot "esperto"
+   */
+  const incidenti = (runs = 3, opts: { seconds?: number; opponents?: number; difficulty?: string } = {}) => {
+    const g = game;
+    const prevCfg = { ...g.sessionCfg };
+    const origRead = g.input.read.bind(g.input);
+    const origReset = g.resetToTrack.bind(g);
+    g.input.read = () => ({ steer: 0, throttle: 0, brake: 1, shiftUp: false, shiftDown: false });
+    const origMsg = g.hud.message;
+    g.hud.message = () => {};
+    g.recordsEnabled = false;
+    const out: { resets: number; contacts: number; incidents: string[] }[] = [];
+    try {
+      for (let run = 0; run < runs; run++) {
+        g.startSession({ ...g.sessionCfg, type: 'gara', minutes: 0, laps: 3, opponents: opts.opponents ?? 7, difficulty: opts.difficulty ?? 'esperto' }, false);
+        g.playerEntity.vehicle.reset(100000, 100000, 0);
+        const botsE = g.entities.filter((e: any) => !e.isPlayer);
+        const step = g.track.length / g.line.n;
+        const first = new Map<any, string>();
+        let resets = 0;
+        g.resetToTrack = (e: any) => { if (e.isPlayer) return; resets++; origReset(e); };
+        const c0 = g.contactCount;
+        let t = 0;
+        while (t < (opts.seconds ?? 100) && g.session.state !== 'finita') {
+          g.fixedUpdate(g.loop.fixedDt);
+          t += g.loop.fixedDt;
+          for (const b of botsE) {
+            if (first.has(b)) continue;
+            const v = b.vehicle;
+            const slip = Math.abs(Math.atan2(v.vLat, Math.abs(v.vLong) + 0.01)) * 57.3;
+            const grass = v.surfaces.filter((x: any) => x.name === 'erba').length;
+            if ((slip > 15 && v.speed > 12) || (grass >= 2 && v.speed > 25)) {
+              const i = Math.round(b.s / step) % g.line.n;
+              first.set(b, `${t.toFixed(1)}s ${b.name} s=${b.s.toFixed(0)} d=${b.d.toFixed(1)} linea=${g.line.offset[i].toFixed(1)} ` +
+                `${(v.speed * 3.6).toFixed(0)}/${(b.bot.profile[i] * 3.6).toFixed(0)} km/h deriva=${slip.toFixed(0)}° erba=${grass} ${b.bot.mode}`);
+            }
+          }
+        }
+        out.push({ resets, contacts: g.contactCount - c0, incidents: [...first.values()] });
+      }
+    } finally {
+      g.input.read = origRead;
+      g.resetToTrack = origReset;
+      g.hud.message = origMsg;
+      g.recordsEnabled = true;
+      g.startSession(prevCfg, false);
+    }
+    return out;
+  };
+
+  (window as any).devTools = { autopilot, bots, incidenti };
 }

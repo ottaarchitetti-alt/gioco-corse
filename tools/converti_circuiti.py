@@ -1,9 +1,8 @@
 """
-Uso: python -I tools/converti_circuiti.py f1-circuits.geojson public/tracks
 Converte i tracciati GeoJSON (bacinger/f1-circuits, licenza MIT) nel formato
-pista v2 del gioco. Uso: python -I convert.py <geojson> <cartella public/tracks>
-"""
+pista v2 del gioco.
 Uso: python -I tools/converti_circuiti.py f1-circuits.geojson public/tracks
+"""
 import json, math, sys, os
 
 R = 6371000.0

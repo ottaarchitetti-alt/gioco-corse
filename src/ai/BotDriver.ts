@@ -95,6 +95,8 @@ export class BotDriver {
   errors = 0;
   /** Tempo da fermo (per capire se è bloccato) */
   stuckTime = 0;
+  /** Da quanto l'auto è girata contromano (testacoda) */
+  wrongWayTime = 0;
   /** Bandiere viste in questo passo */
   flags = { yellow: false, blue: false };
 
@@ -152,6 +154,21 @@ export class BotDriver {
       out.brake = 1;
       return out;
     }
+    // =================== TESTACODA ===================
+    // auto girata rispetto al senso di marcia: niente inseguimento della traiettoria (girerebbe su
+    // sé stessa con lo sterzo a fondo). Si ferma dritta e poi viene rimessa in pista (stuckTime).
+    const smp = track.samples[idx];
+    const headErr = Math.atan2(Math.sin(v.yaw - smp.heading), Math.cos(v.yaw - smp.heading));
+    if (Math.abs(headErr) > 75 * RAD) {
+      this.steer += clamp(-this.steer, -4 * dt, 4 * dt);
+      out.steer = this.steer;
+      out.brake = 1;
+      this.wrongWayTime += dt;
+      // quasi fermo (o girato da troppo): il gioco lo rimette in pista (soglia stuckTime > 4)
+      if ((this.wrongWayTime > 1.5 && v.speed < 12) || this.wrongWayTime > 5) this.stuckTime = 5;
+      return out;
+    }
+    this.wrongWayTime = 0;
     const speed = Math.max(v.speed, 1);
     const halfW = track.samples[idx].width / 2 - 1.2; // dove può stare il centro dell'auto
     const lineD = line.offset[idx];

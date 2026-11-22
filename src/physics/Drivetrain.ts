@@ -166,7 +166,10 @@ export class Drivetrain {
       return;
     }
     if (this.gear > 1) {
-      const lowerRpm = Math.abs(wheelOmega * this.ratio(this.gear - 1)) / RPM_TO_RADS;
+      // giri nella marcia più bassa: si usa anche la velocità dell'auto, perché in frenata le ruote
+      // posteriori possono bloccarsi (omega ~0) e il cambio scalerebbe fino alla prima → testacoda
+      const omega = Math.max(Math.abs(wheelOmega), Math.abs(speedMs) / car.wheelRadius);
+      const lowerRpm = (omega * this.ratio(this.gear - 1)) / RPM_TO_RADS;
       const threshold = brake > 0.1 ? 0.66 : 0.45;
       if (this.rpm < car.maxRpm * threshold && lowerRpm < car.maxRpm * 0.92) {
         this.shift(-1, wheelOmega, speedMs);

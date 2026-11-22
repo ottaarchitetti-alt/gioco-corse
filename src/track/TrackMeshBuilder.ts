@@ -35,7 +35,125 @@ export function buildTrackMesh(track: TrackSpline, anisotropy: number): THREE.Gr
   if (track.pit) group.add(buildPitLane(track.pit, asphalt));
   for (const p of track.data.props) group.add(buildProp(p));
   if (track.data.autoTrees) group.add(buildTrees(track));
+  group.add(buildBrakeBoards(track));
   return group;
+}
+
+/**
+ * Curve che richiedono una frenata: tratti con raggio < 130 m (curvatura media su ~20 m) che girano
+ * di almeno 25°, preceduti da un rettilineo di almeno 140 m. Le chicane (curve a meno di 50 m l'una
+ * dall'altra) contano come una curva sola. Restituisce per ogni curva l'ascissa d'ingresso, la
+ * lunghezza del rettilineo prima e il lato verso cui gira (+1 sinistra, −1 destra).
+ */
+export function brakingCorners(track: TrackSpline): { s: number; approach: number; side: number }[] {
+  const smp = track.samples;
+  const n = smp.length;
+  const step = track.length / n;
+  const w = Math.max(1, Math.round(10 / step));
+  const k = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = -w; j <= w; j++) sum += track.at(i + j).curvature;
+    k[i] = sum / (2 * w + 1);
+  }
+  const isCorner = (i: number) => Math.abs(k[((i % n) + n) % n]) > 1 / 130;
+  const isStraight = (i: number) => Math.abs(k[((i % n) + n) % n]) < 1 / 350;
+  // si parte da un punto non in curva, così nessuna curva viene spezzata dal giro del contatore
+  let start = 0;
+  while (start < n && isCorner(start)) start++;
+  if (start >= n) return [];
+  const regions: { a: number; b: number; turn: number }[] = [];
+  for (let c = 0; c < n; c++) {
+    const i = start + c;
+    if (!isCorner(i)) continue;
+    let j = i, turn = 0;
+    while (j - start < n && isCorner(j)) { turn += Math.abs(k[j % n]) * step; j++; }
+    const last = regions[regions.length - 1];
+    if (last && i - last.b < 50 / step) { last.b = j; last.turn += turn; } // chicane: stessa curva
+    else regions.push({ a: i, b: j, turn });
+    c = j - start;
+  }
+  const out: { s: number; approach: number; side: number }[] = [];
+  for (const r of regions) {
+    if (Math.abs(r.turn) < 25 * (Math.PI / 180)) continue;
+    // rettilineo prima della curva (ignorando i primi metri di ingresso)
+    let a = r.a - 1, len = 0;
+    while (len < 400 && (isStraight(a) || !isCorner(a))) { len += step; a--; if (r.a - a > n - 2) break; }
+    if (len < 140) continue;
+    // lato: verso cui gira il primo tratto (in una chicane conta la prima curva)
+    out.push({ s: (r.a % n) * step, approach: len, side: Math.sign(k[r.a % n]) || 1 });
+  }
+  return out;
+}
+
+/** Testo dei cartelli di frenata (canvas condivise per 100, 200, 300 m). */
+function boardTexture(label: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 160;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#f4f4f4';
+  g.fillRect(0, 0, 256, 160);
+  g.fillStyle = '#c8102e';
+  g.fillRect(0, 0, 256, 18);
+  g.fillRect(0, 142, 256, 18);
+  g.fillStyle = '#111';
+  g.font = 'bold 104px Arial, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(label, 128, 84);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/**
+ * Cartelli di frenata 300/200/100 m prima delle curve, sul lato esterno del rettilineo
+ * d'avvicinamento (come nei circuiti veri). Prima delle curve con rettilineo corto ci sono
+ * solo i cartelli che ci stanno.
+ */
+function buildBrakeBoards(track: TrackSpline): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'brake_boards';
+  const dists = [300, 200, 100];
+  const faceMats = new Map(dists.map((d) => [d, new THREE.MeshStandardMaterial({ map: boardTexture(String(d)), roughness: 0.7 })]));
+  const frameMat = new THREE.MeshStandardMaterial({ color: '#2a2d33', roughness: 0.6, metalness: 0.3 });
+  const panelGeo = new THREE.PlaneGeometry(2.4, 1.5);
+  const backGeo = new THREE.BoxGeometry(2.55, 1.65, 0.1);
+  const postGeo = new THREE.BoxGeometry(0.12, 1.5, 0.12);
+  const coarse = track.samples.filter((_, i) => i % 4 === 0);
+  for (const corner of brakingCorners(track)) {
+    for (const dist of dists) {
+      if (dist > corner.approach - 15) continue;
+      const smp = track.atS(corner.s - dist);
+      // lato esterno: opposto alla direzione della curva
+      const side = -corner.side;
+      const off = smp.width / 2 + KERB_WIDTH + 2.8;
+      const x = smp.x + smp.nx * off * side, z = smp.z + smp.nz * off * side;
+      // niente cartelli sopra un altro tratto di pista (piste che si avvicinano a sé stesse)
+      if (coarse.some((c) => c !== smp && Math.hypot(c.x - x, c.z - z) < c.width / 2 + 2.5)) continue;
+      const b = new THREE.Group();
+      const face = new THREE.Mesh(panelGeo, faceMats.get(dist)!);
+      face.position.set(0, 2.25, -0.055);
+      face.rotation.y = Math.PI; // guarda verso chi arriva
+      const back = new THREE.Mesh(backGeo, frameMat);
+      back.position.y = 2.25;
+      back.castShadow = true;
+      b.add(face, back);
+      for (const px of [-0.9, 0.9]) {
+        const post = new THREE.Mesh(postGeo, frameMat);
+        post.position.set(px, 0.75, 0);
+        post.castShadow = true;
+        b.add(post);
+      }
+      b.position.set(x, 0, z);
+      // un filo girato verso la pista, così si legge meglio
+      b.rotation.y = smp.heading + side * 0.25;
+      g.add(b);
+    }
+  }
+  return g;
 }
 
 /** Una striscia piatta (es. linea bianca) centrata in (x,z), orientata con heading. */

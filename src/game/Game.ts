@@ -209,6 +209,7 @@ export class Game {
     this.input.carSteeringLockDeg = car.steeringLockDeg;
     // la monoposto ha un V6 turbo
     this.sound.cylinders = this.opponentSound.cylinders = car.body === 'monoposto' ? 6 : 8;
+    this.sound.maxRpm = this.opponentSound.maxRpm = car.maxRpm;
 
     // ---- Modello auto (GLB o segnaposto) ----
     const rig = await loadCarRig(car, '#d8231f');

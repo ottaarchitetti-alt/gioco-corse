@@ -68,6 +68,8 @@ export interface HudData {
   trackName: string;
   carName: string;
   compound: string;
+  /** Monoposto: batteria, potenza elettrica, modalità, Overtake mode, ali aperte (null = auto senza ERS) */
+  ers: { charge: number; powerKW: number; mode: string; overtake: 'no' | 'disponibile' | 'attivo'; aeroOpen: number; aeroZone: boolean } | null;
   /** Una voce per gomma: ant. sx, ant. dx, post. sx, post. dx */
   tyres: { temp: number; core: number; pressure: number; tread: number; grip: number; optimal: number }[];
 }
@@ -116,7 +118,8 @@ export class Hud {
         <div class="gear mono">N</div>
       </div>
       <div class="rpm mono">0 giri/min</div>
-      <div class="aids"><span data-a="abs">ABS</span><span data-a="tc">TC</span><span data-a="auto">AUTO</span><span class="lim">LIMITATORE BOX</span></div>`);
+      <div class="aids"><span data-a="abs">ABS</span><span data-a="tc">TC</span><span data-a="auto">AUTO</span><span class="lim">LIMITATORE BOX</span></div>
+      <div class="ers"><div class="bat"><i></i><b></b></div><div class="ers-row mono"><span class="mode"></span><span class="kw"></span><span class="ot">OVERTAKE</span><span class="aero">ALI APERTE</span></div></div>`);
     this.inputs = h('hud-panel hud-inputs', `
       <div class="bar brk"><i></i></div><div class="bar thr"><i></i></div><div class="steer"><i></i></div>`);
     this.info = h('hud-panel hud-info');
@@ -202,6 +205,27 @@ export class Hud {
     aids[1].classList.toggle('on', d.tcActive);
     aids[2].style.display = d.autoShift ? '' : 'none';
     aids[3].style.display = d.limiter ? '' : 'none';
+    // ---- Monoposto: batteria, modalità, Overtake, aerodinamica attiva ----
+    const ersEl = this.dash.querySelector('.ers') as HTMLElement;
+    ersEl.style.display = d.ers ? '' : 'none';
+    if (d.ers) {
+      const e = d.ers;
+      (ersEl.querySelector('.bat i') as HTMLElement).style.width = `${Math.round(e.charge * 100)}%`;
+      (ersEl.querySelector('.bat b') as HTMLElement).textContent = `🔋 ${Math.round(e.charge * 100)}%`;
+      ersEl.querySelector('.bat')!.classList.toggle('low', e.charge < 0.15);
+      (ersEl.querySelector('.mode') as HTMLElement).textContent = e.mode;
+      const kw = ersEl.querySelector('.kw') as HTMLElement;
+      kw.textContent = e.powerKW > 1 ? `+${Math.round(e.powerKW)} kW` : e.powerKW < -1 ? `${Math.round(e.powerKW)} kW` : '';
+      kw.className = `kw ${e.powerKW > 1 ? 'dep' : e.powerKW < -1 ? 'har' : ''}`;
+      const ot = ersEl.querySelector('.ot') as HTMLElement;
+      ot.style.display = e.overtake === 'no' ? 'none' : '';
+      ot.className = `ot ${e.overtake === 'attivo' ? 'on' : ''}`;
+      ot.textContent = e.overtake === 'attivo' ? 'OVERTAKE ATTIVO' : 'OVERTAKE (O)';
+      const aero = ersEl.querySelector('.aero') as HTMLElement;
+      aero.style.display = e.aeroOpen > 0.05 || e.aeroZone ? '' : 'none';
+      aero.className = `aero ${e.aeroOpen > 0.5 ? 'on' : ''}`;
+      aero.textContent = e.aeroOpen > 0.5 ? 'ALI APERTE' : 'ZONA ALI';
+    }
     const fuelEl = this.tyres.querySelector('.fuel') as HTMLElement;
     fuelEl.textContent = `⛽ ${d.fuel.toFixed(1)} kg · ~${isFinite(d.fuelLaps) ? Math.floor(d.fuelLaps) : '–'} giri`;
     fuelEl.classList.toggle('low', d.fuelLaps < 2);

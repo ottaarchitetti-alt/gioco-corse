@@ -33,6 +33,8 @@ export class RacingLine {
   /** Distanza tra campioni consecutivi lungo la traiettoria (m) */
   readonly ds: Float32Array;
   readonly n: number;
+  /** Zone di aerodinamica attiva (monoposto): 1 = ali aperte in rettilineo */
+  aeroZones: Uint8Array | null = null;
 
   constructor(readonly track: TrackSpline) {
     const smp = track.samples;
@@ -40,8 +42,9 @@ export class RacingLine {
     this.offset = new Float32Array(n);
 
     // Ottimizzazione multi-risoluzione
-    let coarse = this.optimize(Math.max(20, Math.round(n / (track.length / 20))), null);
-    coarse = this.optimize(Math.max(40, Math.round(n / (track.length / 6))), coarse);
+    // (punti ogni ~20 m, poi ogni ~6 m: il numero di punti dipende dalla LUNGHEZZA della pista)
+    let coarse = this.optimize(Math.max(20, Math.round(track.length / 20)), null);
+    coarse = this.optimize(Math.max(40, Math.round(track.length / 6)), coarse);
     // dal livello fine a tutti i campioni (interpolazione lineare)
     const m = coarse.length;
     for (let i = 0; i < n; i++) {
@@ -56,6 +59,24 @@ export class RacingLine {
       const s = smp[i];
       this.x[i] = s.x + s.nx * this.offset[i];
       this.z[i] = s.z + s.nz * this.offset[i];
+    }
+    // Rifinitura: la linea centrale ha piccole irregolarità (punti di raccordo delle curve,
+    // tracciati importati): le togliamo smussando la traiettoria (~15 m), sempre dentro la pista.
+    const lim = (i: number) => Math.max(0, smp[i].width / 2 - EDGE_MARGIN);
+    const tx = new Float32Array(n), tz = new Float32Array(n);
+    for (let pass = 0; pass < 24; pass++) {
+      for (let i = 0; i < n; i++) {
+        const a = (i - 1 + n) % n, b2 = (i + 1) % n;
+        tx[i] = (this.x[a] + 2 * this.x[i] + this.x[b2]) / 4;
+        tz[i] = (this.z[a] + 2 * this.z[i] + this.z[b2]) / 4;
+      }
+      for (let i = 0; i < n; i++) {
+        const s = smp[i];
+        const off = Math.max(-lim(i), Math.min(lim(i), (tx[i] - s.x) * s.nx + (tz[i] - s.z) * s.nz));
+        this.offset[i] = off;
+        this.x[i] = s.x + s.nx * off;
+        this.z[i] = s.z + s.nz * off;
+      }
     }
     this.ds = new Float32Array(n);
     for (let i = 0; i < n; i++) {
@@ -136,14 +157,25 @@ export class RacingLine {
     const m = car.mass + car.fuelKg;
     // aderenza "efficace" della gomma calda: la sensibilità al carico e il trasferimento
     // di carico riducono quella nominale (tarato in simulazione: 1,0 ≈ limite reale)
-    const mu = car.tire.mu * 0.85 * gripScale;
+    const mu = car.tire.mu * (car.botGripFactor ?? 0.85) * gripScale;
     const kDown = (0.5 * AIR_DENSITY * car.liftArea) / m; // accelerazione extra per (m/s)²
-    const kDrag = (0.5 * AIR_DENSITY * car.dragArea) / m;
-    // potenza massima alle ruote
+    const kDragCorner = (0.5 * AIR_DENSITY * car.dragArea) / m;
+    // ali aperte nelle zone di aerodinamica attiva: meno resistenza in rettilineo
+    const kDragStraight = car.activeAero ? (0.5 * AIR_DENSITY * car.activeAero.straightDragArea) / m : kDragCorner;
+    const zones = this.aeroZones;
+    const kDragAt = (i: number) => (zones && zones[i] ? kDragStraight : kDragCorner);
+    // potenza massima alle ruote (motore termico)
     let pMax = 0;
     for (const [rpm, nm] of car.torqueCurve) pMax = Math.max(pMax, nm * rpm * RPM_TO_RADS);
     pMax *= car.drivetrainEfficiency;
-    const vTop = 95;
+    // spinta elettrica media su un giro (la batteria non basta per spingere sempre al massimo)
+    const ers = car.ers;
+    const pErs = (kmh: number) => {
+      if (!ers) return 0;
+      const taper = kmh <= ers.taperStartKmh ? 1 : Math.max(0, 1 - (kmh - ers.taperStartKmh) / (ers.taperEndKmh - ers.taperStartKmh));
+      return ers.deployKW * 1000 * 0.55 * taper * car.drivetrainEfficiency;
+    };
+    const vTop = 105;
 
     const v = new Float32Array(n);
     // 1) limite in curva
@@ -161,7 +193,7 @@ export class RacingLine {
         const lat = vi * vi * Math.abs(this.curvature[i]);
         const tot = grip(vi);
         const longAvail = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * 0.55; // trazione posteriore
-        const power = pMax / (m * Math.max(vi, 5)) - kDrag * vi * vi;
+        const power = (pMax + pErs(vi * 3.6)) / (m * Math.max(vi, 5)) - kDragAt(i) * vi * vi;
         const acc = Math.max(0, Math.min(longAvail, power));
         v[j] = Math.min(v[j], Math.sqrt(vi * vi + 2 * acc * this.ds[i]));
       }
@@ -170,7 +202,7 @@ export class RacingLine {
         const vj = v[j];
         const lat = vj * vj * Math.abs(this.curvature[j]);
         const tot = grip(vj);
-        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * brakeScale + kDrag * vj * vj;
+        const dec = Math.sqrt(Math.max(0, tot * tot - lat * lat)) * brakeScale + kDragCorner * vj * vj;
         v[i] = Math.min(v[i], Math.sqrt(vj * vj + 2 * dec * this.ds[i]));
       }
     }

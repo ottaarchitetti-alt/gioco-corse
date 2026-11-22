@@ -21,7 +21,8 @@
  */
 import { clamp, damp, RAD, RPM_TO_RADS } from '../core/math';
 import type { DriverInput } from '../input/InputManager';
-import { downforce, dragForce } from './Aero';
+import { AIR_DENSITY } from './Aero';
+import { HybridSystem } from './Hybrid';
 import type { CarParams } from './CarParams';
 import { Drivetrain } from './Drivetrain';
 import { Suspension } from './Suspension';
@@ -117,12 +118,18 @@ export class Vehicle {
   /** Limitatore di velocità della corsia box (m/s), 0 = spento */
   speedLimiter = 0;
 
+  /** Monoposto 2026: aerodinamica attiva, effetto suolo, batteria (per le GT non fa nulla) */
+  readonly hybrid: HybridSystem;
+  /** Deportanza totale dell'ultimo passo (N), per telemetria */
+  downforceN = 0;
+
   private tcCut = 0;
   private loads = [0, 0, 0, 0];
 
   constructor(public car: CarParams, private groundQuery: GroundQuery) {
     this.tires = [0, 1, 2, 3].map(() => new Tire(car.tire, car.setup.compound));
     this.drivetrain = new Drivetrain(car);
+    this.hybrid = new HybridSystem(car);
     this.fuel = car.fuelKg;
     this.cgToFront = car.wheelbase * (1 - car.weightFront);
     this.cgToRear = car.wheelbase * car.weightFront;
@@ -154,6 +161,7 @@ export class Vehicle {
     this.tires.forEach((t) => t.resetMotion());
     this.suspension.reset();
     this.drivetrain.reset();
+    this.hybrid.reset();
   }
 
   /** Monta 4 gomme nuove. */
@@ -202,10 +210,12 @@ export class Vehicle {
     // ---------- Controllo di trazione (aiuto) ----------
     let throttle = input.throttle;
     const rearSlip = Math.max(this.tires[RL].kappa, this.tires[RR].kappa) / car.tire.peakSlipRatio;
-    if (aids.tc && rearSlip > 1.2 && this.speed > 2) this.tcCut = Math.min(1, this.tcCut + dt * 12);
-    else this.tcCut = Math.max(0, this.tcCut - dt * 4);
+    // sulle monoposto (coppia enorme, poco peso) il controllo interviene più deciso
+    const strongTc = !!car.ers;
+    if (aids.tc && rearSlip > (strongTc ? 1.1 : 1.2) && this.speed > 2) this.tcCut = Math.min(1, this.tcCut + dt * (strongTc ? 25 : 12));
+    else this.tcCut = Math.max(0, this.tcCut - dt * (strongTc ? 6 : 4));
     this.tcActive = this.tcCut > 0.05;
-    throttle *= 1 - this.tcCut * 0.85;
+    throttle *= 1 - this.tcCut * (strongTc ? 1 : 0.85);
     // serbatoio vuoto: il motore si spegne
     if (this.fuel <= 0) throttle = 0;
     // limitatore box: taglia il gas sopra la velocità consentita
@@ -216,6 +226,17 @@ export class Vehicle {
     const drive = this.drivetrain.update(
       dt, throttle, input.brake, this.tires[RL].omega, this.tires[RR].omega, this.speed, aids.autoShift,
     );
+
+    // ---------- Sistema ibrido: recupero in frenata, spinta elettrica a gas aperto ----------
+    const dtr = this.drivetrain;
+    const coupled = dtr.gear > 0 && !dtr.isShifting && !dtr.clutchSlipping;
+    const ersCrank = this.hybrid.updateEnergy(dt, throttle, input.brake, this.speed, dtr.rpm * RPM_TO_RADS, coupled);
+    if (ersCrank !== 0) {
+      const axle = ersCrank * dtr.ratio() * car.drivetrainEfficiency;
+      drive.torqueRL += axle / 2;
+      drive.torqueRR += axle / 2;
+    }
+    this.hybrid.updateAero(dt, throttle, input.brake, this.speed);
 
     // ---------- Consumo di carburante ----------
     // energia meccanica prodotta dal motore / (rendimento × potere calorifico 43 MJ/kg), più il minimo
@@ -274,14 +295,21 @@ export class Vehicle {
     }
 
     // ---------- Aerodinamica ----------
+    // aree aerodinamiche attuali (ali aperte o chiuse) ed effetto suolo
+    const areas = this.hybrid.aeroAreas();
     if (this.speed > 0.01) {
-      const drag = dragForce(car, this.speed) * this.dragFactor;
+      const drag = 0.5 * AIR_DENSITY * areas.drag * this.speed * this.speed * this.dragFactor;
       fLong -= (drag * this.vLong) / this.speed;
       fLat -= (drag * this.vLat) / this.speed;
     }
-    const aero = downforce(car, Math.max(0, this.vLong));
-    aero.front *= this.downforceFactor;
-    aero.rear *= this.downforceFactor;
+    const sus = this.suspension;
+    const ge = this.hybrid.groundEffectFactor(car.setup.rideHeight ?? car.groundEffect?.refRideHeight ?? 0, sus.heave, sus.pitch, car.wheelbase / 2);
+    const vF = Math.max(0, this.vLong);
+    const down = 0.5 * AIR_DENSITY * areas.lift * vF * vF * ge * this.downforceFactor;
+    // ali aperte: il flap posteriore scarica soprattutto il retrotreno → bilanciamento un po' più avanti
+    const bal = car.aeroBalanceFront + this.hybrid.aeroOpen * 0.04;
+    const aero = { front: down * bal, rear: down * (1 - bal) };
+    this.downforceN = down;
 
     // ---------- Integrazione (Eulero semi-implicito) ----------
     const axLocal = fLong / m;

@@ -31,7 +31,7 @@ export const emptyInput = (): DriverInput => ({
 });
 
 /** Azioni "di gioco" (non di guida) che scattano una volta per pressione. */
-export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug';
+export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug' | 'overtake' | 'ersMode';
 
 /** Un pedale calibrato: su quale asse sta e quanto vale a riposo e a fondo corsa. */
 export interface PedalCalibration {
@@ -70,6 +70,9 @@ export interface WheelSettings {
   pedalDeadzone: number;
   shiftUpButton: number;
   shiftDownButton: number;
+  /** Pulsanti della monoposto: Overtake mode e modalità della batteria (-1 = nessuno) */
+  overtakeButton: number;
+  ersModeButton: number;
 }
 
 const DEFAULT_WHEEL: WheelSettings = {
@@ -88,6 +91,8 @@ const DEFAULT_WHEEL: WheelSettings = {
   pedalDeadzone: 0.03,
   shiftUpButton: 4, // paletta destra
   shiftDownButton: 5, // paletta sinistra
+  overtakeButton: 0, // G29: tasto X
+  ersModeButton: 2, // G29: tasto cerchio
 };
 
 /** Converte le impostazioni salvate dalle versioni precedenti (Fasi 1–4). */
@@ -117,6 +122,8 @@ const ACTION_KEYS: Record<string, GameAction> = {
   KeyF: 'ghost',
   KeyM: 'mute',
   F2: 'debug',
+  KeyO: 'overtake',
+  KeyK: 'ersMode',
 };
 
 export type InputDevice = 'tastiera' | 'gamepad' | 'volante';
@@ -346,6 +353,15 @@ export class InputManager {
       if (pressed[upIdx] && !this.prevButtons[upIdx]) this.pendingShiftUp = true;
       if (pressed[downIdx] && !this.prevButtons[downIdx]) this.pendingShiftDown = true;
       // Gamepad standard: Y = telecamera, Start = pausa, Select = reset
+      const edge = (i: number) => i >= 0 && pressed[i] && !this.prevButtons[i];
+      if (isWheel) {
+        if (edge(this.wheel.overtakeButton)) this.pendingActions.push('overtake');
+        if (edge(this.wheel.ersModeButton)) this.pendingActions.push('ersMode');
+      } else {
+        // gamepad: X = Overtake mode, B = modalità batteria
+        if (edge(2)) this.pendingActions.push('overtake');
+        if (edge(1)) this.pendingActions.push('ersMode');
+      }
       if (!isWheel) {
         if (pressed[3] && !this.prevButtons[3]) this.pendingActions.push('camera');
         if (pressed[9] && !this.prevButtons[9]) this.pendingActions.push('pause');

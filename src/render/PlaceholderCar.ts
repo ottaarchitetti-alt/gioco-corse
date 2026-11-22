@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { CarParams } from '../physics/CarParams';
 
-type P2 = [number, number];
+export type P2 = [number, number];
 
 // ----------------------------------------------------------------------------
 // Profili della carrozzeria (z = avanti, metri dal centro del passo)
@@ -57,7 +57,7 @@ const CABIN_KEYS: number[][] = [
 const CAB_FRONT = 0.8, CAB_REAR = -1.92;
 
 /** Interpolazione lineare tra le chiavi, poi media mobile per ammorbidire le linee. */
-function profile(keys: number[][]): (z: number) => number[] {
+export function profile(keys: number[][]): (z: number) => number[] {
   const lin = (z: number): number[] => {
     const zs = keys.map((k) => k[0]);
     if (z >= zs[0]) return keys[0].slice(1);
@@ -80,7 +80,7 @@ const bodyAt = profile(BODY_KEYS);
 const cabinAt = profile(CABIN_KEYS);
 
 /** Campioni lungo z (da avanti a dietro), con punti extra sui bordi indicati. */
-function zSamples(z0: number, z1: number, step: number, extra: number[] = []): number[] {
+export function zSamples(z0: number, z1: number, step: number, extra: number[] = []): number[] {
   const out: number[] = [];
   for (let z = z0; z > z1; z -= step) out.push(z);
   out.push(z1);
@@ -127,13 +127,13 @@ function cabinHalf(z: number): P2[] {
 }
 
 /** Sezione completa e simmetrica da mezza sezione: lato +x in salita, lato -x in discesa. */
-function mirrorFull(half: P2[], shareEnds: boolean): P2[] {
+export function mirrorFull(half: P2[], shareEnds: boolean): P2[] {
   const left = half.map(([x, y]) => [-x, y] as P2).reverse();
   return shareEnds ? [...half, ...left.slice(1, -1)] : [...half, ...left.slice(1)];
 }
 
 /** Altezza di una polilinea (punti con x decrescente) alla coordinata x. */
-function heightAt(pts: P2[], x: number): number {
+export function heightAt(pts: P2[], x: number): number {
   const ax = Math.abs(x);
   if (ax >= pts[0][0]) return pts[0][1];
   for (let i = 0; i < pts.length - 1; i++) {
@@ -147,7 +147,7 @@ function heightAt(pts: P2[], x: number): number {
 // Geometria: loft, tappi, orientamento delle facce
 // ----------------------------------------------------------------------------
 
-function loft(sections: P2[][], zs: number[], closed: boolean): THREE.BufferGeometry {
+export function loft(sections: P2[][], zs: number[], closed: boolean): THREE.BufferGeometry {
   const n = sections[0].length, m = zs.length;
   const pos: number[] = [], uv: number[] = [], idx: number[] = [];
   for (let i = 0; i < m; i++) {
@@ -172,7 +172,7 @@ function loft(sections: P2[][], zs: number[], closed: boolean): THREE.BufferGeom
 }
 
 /** Tappo piatto (a ventaglio) che chiude una sezione. */
-function cap(ring: P2[], z: number): THREE.BufferGeometry {
+export function cap(ring: P2[], z: number): THREE.BufferGeometry {
   const cx = 0, cy = ring.reduce((s, p) => s + p[1], 0) / ring.length;
   const pos: number[] = [cx, cy, z], uv: number[] = [0.5, 0.5], idx: number[] = [];
   ring.forEach(([x, y]) => { pos.push(x, y, z); uv.push(0.5 + x, y); });
@@ -189,7 +189,7 @@ function cap(ring: P2[], z: number): THREE.BufferGeometry {
  * Gira le facce perché guardino "fuori". `outward(p)` dà la direzione esterna
  * attesa in un punto; se le normali in media puntano dall'altra parte, si invertono.
  */
-function orient(g: THREE.BufferGeometry, outward: (x: number, y: number, z: number) => [number, number, number]): THREE.BufferGeometry {
+export function orient(g: THREE.BufferGeometry, outward: (x: number, y: number, z: number) => [number, number, number]): THREE.BufferGeometry {
   const p = g.getAttribute('position'), nrm = g.getAttribute('normal');
   let s = 0;
   for (let i = 0; i < p.count; i++) {
@@ -209,7 +209,7 @@ function orient(g: THREE.BufferGeometry, outward: (x: number, y: number, z: numb
 const fromAxis = (x: number, y: number): [number, number, number] => [x, y - 0.55, 0];
 
 /** Fascia che segue una superficie: per ogni z, i punti xs con altezza surf(z, x) + rialzo. */
-function surfacePatch(z0: number, z1: number, xsAt: (z: number) => number[], surf: (z: number, x: number) => number, lift: number): THREE.BufferGeometry {
+export function surfacePatch(z0: number, z1: number, xsAt: (z: number) => number[], surf: (z: number, x: number) => number, lift: number): THREE.BufferGeometry {
   const zs = zSamples(z0, z1, 0.04);
   const secs = zs.map((z) => xsAt(z).map((x) => [x, surf(z, x) + lift] as P2));
   return orient(loft(secs, zs, false), () => [0, 1, 0]);
@@ -219,7 +219,7 @@ function surfacePatch(z0: number, z1: number, xsAt: (z: number) => number[], sur
 // Materiali
 // ----------------------------------------------------------------------------
 
-function materials() {
+export function materials() {
   return {
     paint: new THREE.MeshPhysicalMaterial({
       name: 'paint', color: '#ffffff', metalness: 0.3, roughness: 0.36, clearcoat: 1, clearcoatRoughness: 0.07, envMapIntensity: 1.6,
@@ -252,7 +252,7 @@ function materials() {
     disc: new THREE.MeshStandardMaterial({ name: 'disc', color: '#6d6f73', roughness: 0.55, metalness: 0.7 }),
   };
 }
-type Mats = ReturnType<typeof materials>;
+export type Mats = ReturnType<typeof materials>;
 
 // ----------------------------------------------------------------------------
 // Costruzione
@@ -532,7 +532,7 @@ function buildWheel(r: number, outer: number, M: Mats): THREE.Group {
 }
 
 /** Fonde tutte le mesh discendenti di `group` in una mesh per materiale (trasformazioni incluse). */
-function mergeByMaterial(group: THREE.Object3D): THREE.Mesh[] {
+export function mergeByMaterial(group: THREE.Object3D): THREE.Mesh[] {
   group.updateMatrixWorld(true);
   const inv = group.matrixWorld.clone().invert();
   const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();

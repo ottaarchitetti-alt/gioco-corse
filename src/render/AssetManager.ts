@@ -19,6 +19,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { CarParams } from '../physics/CarParams';
 import { WHEEL_NAMES } from '../physics/Vehicle';
 import { accentFor, buildPlaceholderCar, numberTexture } from './PlaceholderCar';
+import { buildPlaceholderF1 } from './PlaceholderF1';
 
 /** Il modello "montato", pronto per essere animato da CarView. */
 export interface CarRig {
@@ -52,7 +53,7 @@ export async function loadCarRig(car: CarParams, paintColor: THREE.ColorRepresen
     }
   }
   const source = scene ? 'glb' : 'segnaposto';
-  if (!scene) scene = buildPlaceholderCar(car);
+  if (!scene) scene = car.body === 'monoposto' ? buildPlaceholderF1(car) : buildPlaceholderCar(car);
   return rigCar(scene, paintColor, raceNumber, source);
 }
 
@@ -101,13 +102,16 @@ function applyLivery(root: THREE.Object3D, paintColor: THREE.ColorRepresentation
   const cache = new Map<THREE.Material, THREE.Material>();
   const swap = (m: THREE.Material): THREE.Material => {
     const n = m.name.toLowerCase();
-    const kind = n.startsWith('paint') ? 'paint' : n.startsWith('accent') ? 'accent' : n.startsWith('number') && raceNumber !== undefined ? 'number' : null;
+    const kind = n.startsWith('paint') ? 'paint' : n.startsWith('accent') ? 'accent'
+      : n.startsWith('number') && raceNumber !== undefined ? 'number'
+      : n.startsWith('tyrestripe') ? 'stripe' : null;
     if (!kind) return m;
     if (!cache.has(m)) {
       const c = (m as THREE.MeshStandardMaterial).clone();
       if (kind === 'paint') c.color = paint.clone();
       else if (kind === 'accent') c.color = accent.clone();
-      else c.map = numberTexture(raceNumber!);
+      else if (kind === 'number') c.map = numberTexture(raceNumber!);
+      // 'stripe': solo copia (ogni auto ha il colore della sua mescola)
       cache.set(m, c);
     }
     return cache.get(m)!;

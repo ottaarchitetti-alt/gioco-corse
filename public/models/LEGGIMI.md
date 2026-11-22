@@ -5,9 +5,17 @@ Il gioco carica il file indicato nel campo `"model"` del file auto
 Se il file non c'è, usa automaticamente il segnaposto: quindi **basta salvare
 il tuo GLB qui con quel nome** (o cambiare il nome nel JSON) e ricaricare la pagina.
 
+Auto incluse e nome del modello da creare:
+
+| Auto | File auto | Modello da salvare |
+|---|---|---|
+| GT | `public/cars/gt_segnaposto.car.json` | `public/models/gt_car.glb` |
+| Monoposto 2026 | `public/cars/monoposto_2026.car.json` | `public/models/monoposto.glb` |
+
 ## 1. Impostazioni della scena
 - *Scene Properties → Units*: **Metric**, *Unit Scale* **1.0**, lunghezza in metri.
-- Modella in scala reale: una GT è lunga circa 4,5–4,7 m, larga circa 2 m.
+- Modella in scala reale: una GT è lunga circa 4,5–4,7 m, larga circa 2 m; la monoposto 2026
+  è lunga circa 5,1 m, larga circa 1,9 m, con passo 3,4 m e ruote da circa 72 cm di diametro.
 
 ## 2. Orientamento e origine
 - **Muso verso −Y** di Blender: premendo `1` sul tastierino (vista frontale) devi vedere il muso.
@@ -43,10 +51,22 @@ Quattro **oggetti separati**, con questi nomi esatti:
 Gli Empty delle camere vanno lasciati **senza rotazione**: la camera guarda verso il muso.
 La guida è a sinistra (+X), ma puoi mettere `cam_cockpit` dove vuoi.
 
+**Solo monoposto:**
+
+| Nome | Cosa fa |
+|---|---|
+| `aero_front_flap` | flap dell'ala anteriore: ruota attorno all'asse X (origine sul bordo d'attacco) quando le ali si aprono |
+| `aero_rear_flap` | flap dell'ala posteriore: come sopra (si "appiattisce" in rettilineo) |
+| `cam_hood` | per la monoposto è la **T-cam** sopra il roll-bar |
+
+Sulla monoposto `cam_cockpit` va al centro (X = 0), all'altezza degli occhi del pilota (~0,75 m).
+
 ## 5. Materiali
 - Usa il **Principled BSDF** (diventa un materiale PBR glTF).
 - Il materiale chiamato **`paint`** (anche `paint.001` ecc.) viene ricolorato dal
   gioco: così i bot avranno livree diverse con lo stesso modello.
+- Monoposto: il materiale **`tyrestripe`** (la fascia sul fianco delle gomme) prende il colore
+  della mescola montata: rosso morbida, giallo media, bianco dura.
 - Facoltativi: il materiale **`accent`** (strisce, dettagli) riceve in automatico un
   colore a contrasto (scuro sulle auto chiare, bianco sulle scure); il materiale
   **`number`** riceve una texture con il numero di gara (un tondo bianco con il

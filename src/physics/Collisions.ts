@@ -12,7 +12,7 @@
  */
 import type { Vehicle } from './Vehicle';
 
-/** Mezza lunghezza e mezza larghezza della "scatola" dell'auto (m) */
+/** Mezza lunghezza e mezza larghezza predefinite della "scatola" dell'auto (m); ogni auto può avere le sue */
 const HALF_L = 2.3;
 const HALF_W = 1.0;
 const RESTITUTION = 0.15;
@@ -25,29 +25,32 @@ interface Box {
   fz: number;
   lx: number; // asse sinistra
   lz: number;
+  hl: number; // mezza lunghezza
+  hw: number; // mezza larghezza
 }
 
 function boxOf(v: Vehicle): Box {
   const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
-  return { cx: v.x, cz: v.z, fx: s, fz: c, lx: c, lz: -s };
+  const dim = v.car.collision;
+  return { cx: v.x, cz: v.z, fx: s, fz: c, lx: c, lz: -s, hl: dim?.halfLength ?? HALF_L, hw: dim?.halfWidth ?? HALF_W };
 }
 
 function corners(b: Box): [number, number][] {
   const out: [number, number][] = [];
   for (const a of [1, -1]) for (const w of [1, -1]) {
-    out.push([b.cx + b.fx * HALF_L * a + b.lx * HALF_W * w, b.cz + b.fz * HALF_L * a + b.lz * HALF_W * w]);
+    out.push([b.cx + b.fx * b.hl * a + b.lx * b.hw * w, b.cz + b.fz * b.hl * a + b.lz * b.hw * w]);
   }
   return out;
 }
 
 function inside(b: Box, x: number, z: number): boolean {
   const dx = x - b.cx, dz = z - b.cz;
-  return Math.abs(dx * b.fx + dz * b.fz) <= HALF_L && Math.abs(dx * b.lx + dz * b.lz) <= HALF_W;
+  return Math.abs(dx * b.fx + dz * b.fz) <= b.hl && Math.abs(dx * b.lx + dz * b.lz) <= b.hw;
 }
 
 /** Proiezione (raggio) della scatola su un asse */
 function radius(b: Box, ax: number, az: number): number {
-  return HALF_L * Math.abs(b.fx * ax + b.fz * az) + HALF_W * Math.abs(b.lx * ax + b.lz * az);
+  return b.hl * Math.abs(b.fx * ax + b.fz * az) + b.hw * Math.abs(b.lx * ax + b.lz * az);
 }
 
 export interface CollisionEvent {

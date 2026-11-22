@@ -35,6 +35,8 @@ export interface SetupValues {
   diffCoast: number; // %
   compound: string;
   fuel: number; // kg alla partenza
+  /** Altezza da terra (mm), solo auto a effetto suolo */
+  rideHeight?: number;
 }
 
 /** Assetto di fabbrica, ricavato dal file dell'auto. */
@@ -57,6 +59,7 @@ export function defaultSetup(base: CarParams): SetupValues {
     diffCoast: Math.round(base.diffCoastLock * 100),
     compound: base.setup.compound,
     fuel: base.fuelKg,
+    ...(base.groundEffect ? { rideHeight: Math.round(base.groundEffect.refRideHeight * 1000) } : {}),
   };
 }
 
@@ -74,6 +77,15 @@ export function applySetup(car: CarParams, base: CarParams, s: SetupValues): voi
   car.liftArea = base.liftArea * (0.48 + 0.052 * (f + r));
   car.dragArea = base.dragArea * (0.74 + 0.026 * (0.6 * f + 1.4 * r));
   car.aeroBalanceFront = base.aeroBalanceFront + 0.02 * (f - r);
+  // aerodinamica attiva: anche i valori ad ali aperte seguono le ali scelte
+  if (base.activeAero) {
+    car.activeAero = {
+      ...base.activeAero,
+      straightDragArea: base.activeAero.straightDragArea * (car.dragArea / base.dragArea),
+      straightLiftArea: base.activeAero.straightLiftArea * (car.liftArea / base.liftArea),
+    };
+  }
+  if (base.groundEffect) car.setup.rideHeight = (s.rideHeight ?? base.groundEffect.refRideHeight * 1000) / 1000;
 
   car.finalDrive = s.finalDrive;
   const sus = car.suspension, bs = base.suspension;

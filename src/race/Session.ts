@@ -59,6 +59,8 @@ export class Competitor {
   penalty = 0;
   /** Ritirato (es. senza benzina): non viene classificato */
   retired = false;
+  /** Squalificato (es. regola delle due mescole): motivo */
+  dsq: string | null = null;
   position = 1;
 
   constructor(
@@ -210,6 +212,7 @@ export class Session {
     const list = [...this.competitors];
     if (this.isRace) {
       list.sort((a, b) => {
+        if (!!a.dsq !== !!b.dsq) return a.dsq ? 1 : -1;
         if (a.finished && b.finished) return a.finishTime! + a.penalty - (b.finishTime! + b.penalty);
         if (a.finished !== b.finished) return a.finished ? -1 : 1;
         if (a.retired !== b.retired) return a.retired ? 1 : -1;
@@ -232,6 +235,7 @@ export class Session {
   gap(c: Competitor, toLeader = true): string {
     const st = this.standings();
     const i = st.indexOf(c);
+    if (c.dsq) return 'Squalificato';
     if (c.retired) return 'Ritirato';
     if (i <= 0) return this.isRace ? 'Leader' : c.timing.best ? '' : '–';
     const ref = toLeader ? st[0] : st[i - 1];

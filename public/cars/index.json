@@ -1,0 +1,4 @@
+[
+  { "id": "gt_segnaposto", "name": "GT", "file": "gt_segnaposto.car.json", "description": "Gran turismo da corsa: pesante, poca deportanza, pit stop con rifornimento" },
+  { "id": "monoposto_2026", "name": "Monoposto 2026", "file": "monoposto_2026.car.json", "description": "Ruote scoperte, 768 kg, ibrido da 750 kW, aerodinamica attiva e Overtake mode" }
+]

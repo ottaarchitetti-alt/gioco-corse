@@ -61,6 +61,23 @@ def resample(p, step):
     return out
 
 
+def catmull(p, alpha=0.5, step=1.0):
+    """Curva Catmull-Rom centripeta chiusa che passa per i punti originali (niente spigoli nei vertici)."""
+    n = len(p); out = []
+    for i in range(n):
+        p0, p1, p2, p3 = p[i - 1], p[i], p[(i + 1) % n], p[(i + 2) % n]
+        tj = lambda ti, a, b: ti + max(1e-6, math.dist(a, b)) ** alpha
+        t0 = 0.0; t1 = tj(t0, p0, p1); t2 = tj(t1, p1, p2); t3 = tj(t2, p2, p3)
+        m = max(1, int(math.dist(p1, p2) / step))
+        for k in range(m):
+            t = t1 + (t2 - t1) * k / m
+            L = lambda a, b, ta, tb: ((tb - t) / (tb - ta) * a[0] + (t - ta) / (tb - ta) * b[0], (tb - t) / (tb - ta) * a[1] + (t - ta) / (tb - ta) * b[1])
+            A1 = L(p0, p1, t0, t1); A2 = L(p1, p2, t1, t2); A3 = L(p2, p3, t2, t3)
+            B1 = L(A1, A2, t0, t2); B2 = L(A2, A3, t1, t3)
+            out.append(L(B1, B2, t1, t2))
+    return out
+
+
 def smooth(p, passes):
     n = len(p)
     for _ in range(passes):
@@ -76,8 +93,22 @@ def auto_handles(pts, i):
     return (-dx * li, -dz * li), (dx * lo, dz * lo)
 
 
-def bezier_samples(pts, sub=24):
-    n = len(pts); hs = [auto_handles(pts, i) for i in range(n)]; out = []
+def tangent_handles(dense, idx):
+    """Maniglie dalla direzione vera del tracciato (non dalla corda tra i punti vicini):
+    con punti a distanze diverse la curva resta fedele, senza picchi di curvatura."""
+    n = len(dense); m = len(idx); hs = []
+    for k in range(m):
+        i = idx[k]; a = dense[i - 1]; b = dense[(i + 1) % n]
+        tx, tz = b[0] - a[0], b[1] - a[1]; l = math.hypot(tx, tz) or 1; tx /= l; tz /= l
+        prev = dense[idx[k - 1]]; nxt = dense[idx[(k + 1) % m]]
+        # lunghezza lungo la curva tra i due punti ≈ (indici di distanza) × passo
+        di = ((i - idx[k - 1]) % n) * 5.0 / 3; do = ((idx[(k + 1) % m] - i) % n) * 5.0 / 3
+        hs.append(((-tx * di, -tz * di), (tx * do, tz * do)))
+    return hs
+
+
+def bezier_samples(pts, sub=24, hs=None):
+    n = len(pts); hs = hs or [auto_handles(pts, i) for i in range(n)]; out = []
     for i in range(n):
         j = (i + 1) % n; p0 = pts[i]; p1 = pts[j]
         c1 = (p0[0] + hs[i][1][0], p0[1] + hs[i][1][1]); c2 = (p1[0] + hs[j][0][0], p1[1] + hs[j][0][1])
@@ -101,7 +132,7 @@ def simplify(dense, tol, max_seg):
     for _ in range(30):
         idx = sorted(keep)
         pts = [dense[i] for i in idx]
-        bz = bezier_samples(pts, 16)
+        bz = bezier_samples(pts, 16, tangent_handles(dense, idx))
         # errore: per ogni punto denso, distanza dal campione bezier più vicino (ricerca locale)
         worst = []
         m = len(bz); j = 0
@@ -133,11 +164,12 @@ def radius3(a, b, c):
     return 1e9 if cross < 1e-9 else ab * bc * ca / (2 * cross)
 
 
-def relax_hairpins(p, width):
-    """Allarga i tornanti con raggio impossibile (< 0,8 × larghezza) smussandoli localmente."""
+def relax_hairpins(p, width, min_r):
+    """Allarga le curve con raggio più stretto di min_r (i tracciati originali hanno pochi punti
+    nelle chicane, che risultano più strette del vero) smussandole localmente."""
     n = len(p); p = list(p)
-    for _ in range(200):
-        bad = [i for i in range(n) if radius3(p[i - 2], p[i], p[(i + 2) % n]) < width * 0.8]
+    for _ in range(600):
+        bad = [i for i in range(n) if min(radius3(p[i - 1], p[i], p[(i + 1) % n]), radius3(p[i - 2], p[i], p[(i + 2) % n])) < min_r]
         if not bad:
             break
         for i in bad:
@@ -173,7 +205,7 @@ def build(feature, num, gid, name, width, reverse):
     if reverse:
         p = [p[0]] + p[1:][::-1]
     official = feature['properties']['length']
-    dense = smooth(resample(p, 4.0), 5)
+    dense = resample(smooth(resample(catmull(p), 2.0), 8), 4.0)
     # scala alla lunghezza ufficiale
     k = official / plen(dense)
     dense = [(x * k, z * k) for x, z in dense]
@@ -182,15 +214,21 @@ def build(feature, num, gid, name, width, reverse):
     cx = (min(xs) + max(xs)) / 2; cz = (min(zs) + max(zs)) / 2
     dense = [(x - cx, z - cz) for x, z in dense]
     dense = resample(dense, 5.0)
-    dense = relax_hairpins(dense, width)
+    dense = relax_hairpins(dense, width, 9.0 if gid == 'monaco' else 14.0)
 
-    pts, idx = simplify(dense, 0.6, 70)
+    pts, idx = simplify(dense, 0.35, 60)
     # larghezza locale: più stretta dove il tracciato passa vicino a un'altra sua parte
     def local_width(i):
         if gid == 'suzuka':
             return width  # l'incrocio del "8" è voluto (in realtà è un ponte)
         c = clearance(dense, dense[i][0], dense[i][1], i, 40)
         return max(7.5, min(width, c - 4.0))
+    # dove la pista si stringe servono punti fitti (ogni 15 m), altrimenti la larghezza
+    # verrebbe interpolata tra punti lontani
+    extra = {i for i in range(0, len(dense), 3) if local_width(i) < width - 0.3}
+    if extra:
+        idx = sorted(set(idx) | extra | {(i + 3) % len(dense) for i in extra} | {(i - 3) % len(dense) for i in extra})
+        pts = [dense[i] for i in idx]
     widths = [local_width(i) for i in idx]
     # niente salti bruschi: una passata di minimo con i vicini
     widths = [min(widths[i - 1] + 2, widths[i], widths[(i + 1) % len(widths)] + 2) for i in range(len(widths))]
@@ -198,9 +236,11 @@ def build(feature, num, gid, name, width, reverse):
     tang = headings(dense)
 
     # punti della Bézier (il primo è la linea di partenza)
+    hs = tangent_handles(dense, idx)
     points = []
-    for (x, z), w in zip(pts, widths):
-        pt = {'x': round(x, 2), 'z': round(z, 2), 'handle': 'auto', 'kerb': 'auto'}
+    for (x, z), w, (hin, hout) in zip(pts, widths, hs):
+        pt = {'x': round(x, 2), 'z': round(z, 2), 'handle': 'smooth', 'kerb': 'auto',
+              'hin': {'x': round(hin[0], 2), 'z': round(hin[1], 2)}, 'hout': {'x': round(hout[0], 2), 'z': round(hout[1], 2)}}
         if w < width - 0.05:
             pt['width'] = round(w, 1)
         points.append(pt)

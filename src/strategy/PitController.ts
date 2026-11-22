@@ -9,6 +9,7 @@
  * Il tempo passato in corsia (ingresso, sosta, uscita) conta nel tempo sul giro,
  * esattamente come nella realtà.
  */
+import type { CarParams } from '../physics/CarParams';
 import { clamp, RAD } from '../core/math';
 import { emptyInput, type DriverInput } from '../input/InputManager';
 import type { Vehicle } from '../physics/Vehicle';
@@ -25,10 +26,12 @@ export interface PitPlan {
 }
 
 /** Durata della sosta (s): sollevamento + max(cambio gomme, rifornimento) — si fanno insieme. */
-export function serviceTime(plan: PitPlan): number {
-  const tyres = plan.changeTyres ? 13 : 0;
-  const fuel = plan.addFuel / 2.5; // 2,5 kg al secondo
-  return 4 + Math.max(tyres, fuel);
+/** Durata della sosta: tempo fisso + il più lungo tra cambio gomme e rifornimento (GT: 4 + 13 s; monoposto ~2+2,4 s). */
+export function serviceTime(plan: PitPlan, car?: CarParams): number {
+  const p = car?.pit ?? { fixedTime: 4, tyreChangeTime: 13, refuel: true };
+  const tyres = plan.changeTyres ? p.tyreChangeTime : 0;
+  const fuel = p.refuel ? plan.addFuel / 2.5 : 0; // 2,5 kg al secondo
+  return p.fixedTime + Math.max(tyres, fuel);
 }
 
 export class PitController {
@@ -115,7 +118,7 @@ export class PitController {
       lat = stallLat * clamp(1 - (toStall - 5) / 30, 0, 1);
       if (toStall < 1.5 && v.speed < 1.2) {
         this.phase = 'sosta';
-        this.serviceTotal = this.serviceLeft = serviceTime(this.plan);
+        this.serviceTotal = this.serviceLeft = serviceTime(this.plan, this.vehicle.car);
         out.brake = 1;
         return out;
       }

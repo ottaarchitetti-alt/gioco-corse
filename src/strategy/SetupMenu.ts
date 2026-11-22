@@ -17,7 +17,13 @@ interface Row {
   help: string;
 }
 
-const GROUPS: { title: string; rows: Row[] }[] = [
+/** Gruppi di regolazioni: gli intervalli dipendono dall'auto (GT o monoposto). */
+function groupsFor(base: CarParams): { title: string; rows: Row[] }[] {
+  const fd = base.finalDrive, sf = base.suspension.springFront / 1000, sr = base.suspension.springRear / 1000;
+  const r2 = (x: number) => Math.round(x * 20) / 20;
+  const r5 = (x: number) => Math.round(x / 5) * 5;
+  const hotP = base.tire.optimalPressure.toFixed(2).replace('.', ',');
+  return [
   {
     title: 'Aerodinamica',
     rows: [
@@ -28,7 +34,7 @@ const GROUPS: { title: string; rows: Row[] }[] = [
   {
     title: 'Trasmissione',
     rows: [
-      { key: 'finalDrive', label: 'Rapporto finale', min: 3.0, max: 4.4, step: 0.05, unit: '', help: 'Più alto = più accelerazione, meno velocità massima. Regolalo per arrivare al limitatore a fine rettilineo.' },
+      { key: 'finalDrive', label: 'Rapporto finale', min: r2(fd * 0.83), max: r2(fd * 1.22), step: 0.05, unit: '', help: 'Più alto = più accelerazione, meno velocità massima. Regolalo per arrivare al limitatore a fine rettilineo.' },
       { key: 'diffPreload', label: 'Differenziale: precarico', min: 0, max: 300, step: 10, unit: 'Nm', help: 'Bloccaggio sempre presente: stabilità, ma l\'auto gira meno volentieri a centro curva.' },
       { key: 'diffPower', label: 'Differenziale: in trazione', min: 0, max: 100, step: 5, unit: '%', help: 'Più alto = più motricità in uscita, ma più sottosterzo col gas.' },
       { key: 'diffCoast', label: 'Differenziale: in rilascio', min: 0, max: 100, step: 5, unit: '%', help: 'Più alto = più stabile in frenata/inserimento, ma meno rotazione.' },
@@ -37,8 +43,8 @@ const GROUPS: { title: string; rows: Row[] }[] = [
   {
     title: 'Sospensioni',
     rows: [
-      { key: 'springFront', label: 'Molle anteriori', min: 80, max: 250, step: 5, unit: 'N/mm', help: 'Più rigide = risposta più pronta, ma meno aderenza sui cordoli e sulle sconnessioni.' },
-      { key: 'springRear', label: 'Molle posteriori', min: 80, max: 250, step: 5, unit: 'N/mm', help: 'Come sopra, per il posteriore.' },
+      { key: 'springFront', label: 'Molle anteriori', min: r5(sf * 0.5), max: r5(sf * 1.6), step: 5, unit: 'N/mm', help: 'Più rigide = risposta più pronta, ma meno aderenza sui cordoli e sulle sconnessioni.' },
+      { key: 'springRear', label: 'Molle posteriori', min: r5(sr * 0.5), max: r5(sr * 1.6), step: 5, unit: 'N/mm', help: 'Come sopra, per il posteriore.' },
       { key: 'arbFront', label: 'Barra antirollio ant.', min: 1, max: 10, step: 1, unit: '', help: 'Più rigida = più sottosterzo (meno rollio davanti).' },
       { key: 'arbRear', label: 'Barra antirollio post.', min: 1, max: 10, step: 1, unit: '', help: 'Più rigida = più sovrasterzo (meno rollio dietro).' },
       { key: 'damperFront', label: 'Ammortizzatori ant.', min: 1, max: 10, step: 1, unit: '', help: 'Più duri = il carico si sposta più in fretta (auto più nervosa nei transitori).' },
@@ -54,12 +60,19 @@ const GROUPS: { title: string; rows: Row[] }[] = [
   {
     title: 'Gomme e carburante (dalla prossima partenza o sosta)',
     rows: [
-      { key: 'pressureFront', label: 'Pressione ant. a freddo', min: 1.0, max: 2.2, step: 0.05, unit: 'bar', help: 'Si alza scaldandosi: cerca circa 2,0 bar a caldo (guarda l\'HUD gomme).' },
+      { key: 'pressureFront', label: 'Pressione ant. a freddo', min: 1.0, max: 2.2, step: 0.05, unit: 'bar', help: `Si alza scaldandosi: cerca circa ${hotP} bar a caldo (guarda l'HUD gomme).` },
       { key: 'pressureRear', label: 'Pressione post. a freddo', min: 1.0, max: 2.2, step: 0.05, unit: 'bar', help: 'Come sopra.' },
-      { key: 'fuel', label: 'Carburante alla partenza', min: 5, max: 110, step: 1, unit: 'kg', help: 'Più benzina = più giri senza fermarsi, ma auto più pesante (più lenta e usura gomme maggiore).' },
+      { key: 'fuel', label: 'Carburante alla partenza', min: 5, max: base.fuelCapacity, step: 1, unit: 'kg', help: base.pit?.refuel === false ? 'Niente rifornimenti: in gara deve bastare fino alla fine. Più benzina = auto più pesante.' : 'Più benzina = più giri senza fermarsi, ma auto più pesante (più lenta e usura gomme maggiore).' },
     ],
   },
-];
+  ...(base.groundEffect ? [{
+    title: 'Effetto suolo',
+    rows: [
+      { key: 'rideHeight' as const, label: 'Altezza da terra', min: 20, max: 55, step: 1, unit: 'mm', help: "Più bassa = il fondo genera più carico (più aderenza in curva), ma tocca terra sui cordoli e in frenata e lì perde carico all'improvviso." },
+    ],
+  }] : []),
+  ];
+}
 
 export class SetupMenu {
   private el: HTMLDivElement;
@@ -96,7 +109,7 @@ export class SetupMenu {
   private render(): void {
     const d = this.draft;
     const compounds = Object.entries(this.car.tire.compounds);
-    const groups = GROUPS.map((g) => `
+    const groups = groupsFor(this.base).map((g) => `
       <h2>${g.title}</h2>
       ${g.rows.map((r) => `
         <div class="srow">
@@ -124,7 +137,7 @@ export class SetupMenu {
       el.addEventListener('input', () => {
         const k = el.dataset.k as keyof SetupValues;
         (d as unknown as Record<string, number>)[k] = parseFloat(el.value);
-        const row = GROUPS.flatMap((g) => g.rows).find((r) => r.key === k)!;
+        const row = groupsFor(this.base).flatMap((g) => g.rows).find((r) => r.key === k)!;
         (this.el.querySelector(`[data-v="${k}"]`) as HTMLElement).textContent = this.fmt(row, d[k] as number);
       }),
     );

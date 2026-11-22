@@ -14,6 +14,8 @@ const CONTROLS = `
   <tr><td>Q / Ctrl sx</td><td>Marcia giù (da ferma in 1ª → retromarcia)</td></tr>
   <tr><td>C</td><td>Cambia telecamera (esterna, cofano, abitacolo)</td></tr>
   <tr><td>R</td><td>Rimetti l'auto in pista</td></tr>
+  <tr><td>O</td><td>Monoposto: Overtake mode (se al traguardo eri entro 1 s da chi ti precede)</td></tr>
+  <tr><td>K</td><td>Monoposto: modalità batteria (bilanciata, attacco, ricarica)</td></tr>
   <tr><td>L</td><td>Elenco dei giri della sessione (tempi e settori)</td></tr>
   <tr><td>F</td><td>Fantasma del giro migliore on/off (prove e qualifica)</td></tr>
   <tr><td>T</td><td>Telemetria a numeri (carichi, slip, temperature, usura)</td></tr>
@@ -23,7 +25,8 @@ const CONTROLS = `
   <tr><td>P / Esc</td><td>Pausa</td></tr>
   <tr><td>H</td><td>Questo aiuto</td></tr>
 </table>
-<p>Gamepad: stick sinistro sterza, grilletti gas/freno, dorsali per cambiare, Y telecamera.<br>
+<p>Gamepad: stick sinistro sterza, grilletti gas/freno, dorsali per cambiare, Y telecamera, X Overtake, B batteria.<br>
+Volante G29: tasto X = Overtake, cerchio = modalità batteria.<br>
 Volante: si attiva appena lo muovi. Assi e pulsanti si regolano nel pannello F2 → Volante.</p>`;
 
 export class Overlay {
@@ -61,6 +64,9 @@ export class Overlay {
     onStart: (c: SessionConfig) => void,
     onCalibrate: () => void,
     onSetup: () => void,
+    cars: { id: string; name: string; description?: string }[] = [],
+    carId = '',
+    onCarChange: (id: string) => void = () => {},
   ): void {
     const cfg = { ...initial };
     const typeBtn = (t: SessionType) =>
@@ -82,6 +88,9 @@ export class Overlay {
       this.card.innerHTML = `
         <h1>${trackName}</h1>
         <p>${carName} · Record: <b>${recordText}</b></p>
+        ${cars.length > 1 ? `<h2>Vettura</h2>
+        <div class="segs">${cars.map((c) => `<button class="seg ${c.id === carId ? 'on' : ''}" data-car="${c.id}" title="${c.description ?? ''}">${c.name}</button>`).join('')}</div>
+        <p class="small">${cars.find((c) => c.id === carId)?.description ?? ''}. Gli avversari usano la stessa vettura.</p>` : ''}
         <h2>Sessione</h2>
         <div class="segs">${(['libere', 'qualifica', 'gara'] as SessionType[]).map(typeBtn).join('')}</div>
         <div class="form">${opts}</div>
@@ -118,6 +127,9 @@ export class Overlay {
       );
       this.card.querySelector('[data-cal]')!.addEventListener('click', onCalibrate);
       this.card.querySelector('[data-setup]')!.addEventListener('click', onSetup);
+      this.card.querySelectorAll<HTMLButtonElement>('[data-car]').forEach((b) =>
+        b.addEventListener('click', () => { if (b.dataset.car !== carId) onCarChange(b.dataset.car!); }),
+      );
       this.card.querySelectorAll<HTMLInputElement>('[data-m]').forEach((el) =>
         el.addEventListener('change', () => {
           const v = Math.max(0, parseFloat(el.value.replace(',', '.')) || 0);

@@ -10,9 +10,9 @@
  * per questo `start()` viene chiamato dal pulsante "Entra in pista".
  */
 
-const CYLINDERS = 8;
-
 export class EngineSound {
+  /** Cilindri: 8 per la GT, 6 per la monoposto (V6 turbo ibrido) */
+  cylinders = 8;
   private ctx: AudioContext | null = null;
   private master!: GainNode;
   private oscs: OscillatorNode[] = [];
@@ -113,7 +113,7 @@ export class EngineSound {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    const fireHz = (rpm / 60) * (CYLINDERS / 2);
+    const fireHz = (rpm / 60) * (this.cylinders / 2);
     for (const o of this.oscs) {
       o.frequency.setTargetAtTime(fireHz * (o as OscillatorNode & { mult: number }).mult, t, 0.015);
     }

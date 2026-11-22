@@ -17,7 +17,7 @@ import { GameLoop } from '../core/GameLoop';
 import { formatLapTime, MS_TO_KMH } from '../core/math';
 import { loadJSON, saveJSON } from '../core/storage';
 import { emptyInput, InputManager, type DriverInput } from '../input/InputManager';
-import { loadCar, type CarParams } from '../physics/CarParams';
+import { listCars, loadCar, type CarEntry, type CarParams } from '../physics/CarParams';
 import { resolveCollisions } from '../physics/Collisions';
 import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../physics/Vehicle';
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
@@ -40,10 +40,11 @@ import { navigate } from '../ui/router';
 import { TelemetryGraph } from '../ui/TelemetryGraph';
 import { loadSettings, openSettings, type GameSettings } from '../ui/Settings';
 import { PitController, serviceTime, type PitPlan } from '../strategy/PitController';
+import { activeAeroZones, ERS_MODE_NAMES, ERS_MODES } from '../physics/Hybrid';
 import { applySetup, loadSetup, saveSetup, type SetupValues } from '../strategy/Setup';
 import type { PitStall } from '../track/TrackSpline';
 
-const CAR_URL = 'cars/gt_segnaposto.car.json';
+const DEFAULT_CAR = 'gt_segnaposto';
 
 /** Superfici (Fase 7/8: valori diversi con pioggia, sporco, gomma depositata). */
 const SURFACES: Record<Surface['name'], Surface> = {
@@ -97,6 +98,9 @@ interface CarEntity {
   /** carburante usato al passaggio sul traguardo e consumo medio al giro */
   fuelAtLine: number;
   fuelPerLap: number | null;
+  /** mescole usate in gara (regola delle due mescole) e controllo all'arrivo già fatto */
+  compoundsUsed: Set<string>;
+  ruleChecked: boolean;
 }
 
 export class Game {
@@ -172,8 +176,15 @@ export class Game {
    * @param trackId pista da caricare (inclusa o creata con l'editor)
    * @param fromEditor true se si arriva dall'editor: nel menu di pausa c'è "Torna all'editor"
    */
-  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false) {
+  /** Campioni della pista in zona di aerodinamica attiva (1) */
+  private aeroZones: Uint8Array = new Uint8Array(0);
+  /** Auto disponibili e auto scelta (tutta la griglia usa la stessa: una sola classe) */
+  private cars: CarEntry[] = [];
+  private carId: string;
+
+  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false, carId: string | null = null) {
     this.sessionCfg = { ...DEFAULT_SESSION, ...this.sessionCfg };
+    this.carId = carId ?? loadJSON('car', DEFAULT_CAR);
   }
 
   // scorciatoie
@@ -189,9 +200,15 @@ export class Game {
     this.renderer = new Renderer(this.appEl);
 
     // ---- Dati ----
-    const [car, trackData] = await Promise.all([loadCar(CAR_URL), TrackStore.load(this.trackId)]);
+    this.cars = await listCars();
+    const entry = this.cars.find((c) => c.id === this.carId) ?? this.cars[0];
+    this.carId = entry.id;
+    saveJSON('car', this.carId);
+    const [car, trackData] = await Promise.all([loadCar(`cars/${entry.file}`), TrackStore.load(this.trackId)]);
     this.car = car;
     this.input.carSteeringLockDeg = car.steeringLockDeg;
+    // la monoposto ha un V6 turbo
+    this.sound.cylinders = this.opponentSound.cylinders = car.body === 'monoposto' ? 6 : 8;
 
     // ---- Modello auto (GLB o segnaposto) ----
     const rig = await loadCarRig(car, '#d8231f');
@@ -214,6 +231,9 @@ export class Game {
     this.track = new TrackSpline(trackData);
     this.renderer.scene.add(buildTrackMesh(this.track, this.renderer.maxAnisotropy));
     this.line = new RacingLine(this.track);
+    // zone di aerodinamica attiva (monoposto 2026): rettilinei lunghi
+    this.aeroZones = activeAeroZones(this.track, car);
+    this.line.aeroZones = this.aeroZones;
     if (this.track.pit) this.pitEntryS = this.track.project(this.track.pit.samples[0].x, this.track.pit.samples[0].z).s;
 
     // ---- Record personale (legato alla geometria: se modifichi la pista riparte da zero) ----
@@ -264,6 +284,7 @@ export class Game {
       id, name, isPlayer, bot: null,
       wheelHints: [-1, -1, -1, -1], pitHints: [-1, -1, -1, -1], hint: -1, s: 0, d: 0, startX: 0, startZ: 0,
       pit: null, stall: null, pitRequest: null, pitStops: 0, fuelAtLine: 0, fuelPerLap: null,
+      compoundsUsed: new Set<string>(), ruleChecked: false,
     } as unknown as CarEntity;
     e.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(e, i, x, z));
     e.view = new CarView(rig, e.vehicle);
@@ -293,6 +314,12 @@ export class Game {
       },
       () => void this.openWheelCalibration(),
       () => void this.openSetup(),
+      this.cars, this.carId,
+      (id) => {
+        // cambiare auto ricarica la schermata di guida (modelli, fisica e bot nuovi)
+        saveJSON('car', id);
+        navigate('guida', { pista: this.trackId, auto: id, ...(this.fromEditor ? { da: 'editor' } : {}) });
+      },
     );
   }
 
@@ -555,7 +582,7 @@ export class Game {
 
   /** Consumo stimato al giro (kg) per un'auto: misurato se disponibile, altrimenti stimato. */
   private fuelPerLapOf(e: CarEntity): number {
-    return e.fuelPerLap ?? (this.track.length / 1000) * FUEL_PER_KM_EST * this.sessionCfg.fuelMultiplier;
+    return e.fuelPerLap ?? (this.track.length / 1000) * (e.vehicle.car.fuelPerKmEst ?? FUEL_PER_KM_EST) * this.sessionCfg.fuelMultiplier;
   }
 
   /** Inizio sessione: moltiplicatori, piazzole, carburante (i bot decidono quanto caricarne). */
@@ -571,6 +598,9 @@ export class Game {
       e.pit = null;
       e.pitRequest = null;
       e.pitStops = 0;
+      e.compoundsUsed = new Set([e.vehicle.tires[0].compound.name]);
+      e.ruleChecked = false;
+      e.vehicle.hybrid.newLap(false);
       e.vehicle.fuelUsed = 0;
       e.fuelAtLine = 0;
       e.fuelPerLap = null;
@@ -578,8 +608,9 @@ export class Game {
       const cap = e.vehicle.car.fuelCapacity;
       if (e.isPlayer) e.vehicle.fuel = Math.min(cap, e.vehicle.car.fuelKg);
       else if (this.session.isRace) {
-        // il bot carica la benzina per tutta la gara più un giro di margine (se ci sta nel serbatoio)
-        e.vehicle.fuel = Math.min(cap, (cfg.laps + 1.3) * this.fuelPerLapOf(e));
+        // il bot carica la benzina per tutta la gara più un margine (se ci sta nel serbatoio)
+        const margin = e.vehicle.car.pit?.refuel === false ? 0.7 : 1.3;
+        e.vehicle.fuel = Math.min(cap, (cfg.laps + margin) * this.fuelPerLapOf(e));
       } else e.vehicle.fuel = Math.min(cap, e.vehicle.car.fuelKg);
     });
     this.radioSaid.clear();
@@ -608,7 +639,8 @@ export class Game {
         plan.changeTyres ? `gomme ${this.car.tire.compounds[plan.compound]?.name ?? plan.compound}` : 'niente gomme',
         plan.addFuel > 0 ? `+${plan.addFuel.toFixed(0)} kg di benzina` : 'niente benzina',
       ];
-      this.radio(`Box, box! Piano: ${parts.join(', ')} · sosta ~${serviceTime(plan).toFixed(0)} s`);
+      if (this.car.pit?.refuel === false) parts.pop();
+      this.radio(`Box, box! Piano: ${parts.join(', ')} · sosta ~${serviceTime(plan, this.car).toFixed(1)} s`);
     } else if (this.session.isRace) {
       this.radio(`${e.name} è entrato ai box.`, 4);
     }
@@ -617,7 +649,8 @@ export class Game {
   /** Lavoro dei meccanici a fine sosta. */
   private doService(e: CarEntity, plan: PitPlan): void {
     const v = e.vehicle;
-    v.fuel = Math.min(v.car.fuelCapacity, v.fuel + plan.addFuel);
+    if (v.car.pit?.refuel !== false) v.fuel = Math.min(v.car.fuelCapacity, v.fuel + plan.addFuel);
+    if (plan.changeTyres) e.compoundsUsed.add(v.car.tire.compounds[plan.compound || v.car.setup.compound]?.name ?? '');
     if (plan.changeTyres) {
       const s = v.car.setup;
       const start = this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3;
@@ -632,6 +665,8 @@ export class Game {
 
   /** Al passaggio sul traguardo: consumo medio, strategia dei bot, radio per il pilota. */
   private onLapLine(e: CarEntity): void {
+    this.lapLineHybrid(e);
+    this.checkCompoundRule(e);
     const used = e.vehicle.fuelUsed - e.fuelAtLine;
     e.fuelAtLine = e.vehicle.fuelUsed;
     if (used > 0.05 && !e.pit) e.fuelPerLap = e.fuelPerLap === null ? used : e.fuelPerLap * 0.6 + used * 0.4;
@@ -642,18 +677,66 @@ export class Game {
       const perLap = this.fuelPerLapOf(e);
       const tread = Math.min(...e.vehicle.tires.map((t) => t.tread));
       // l'ingresso box è a fine giro: la sosta va chiesta finché la benzina basta per arrivarci con margine
-      const lowFuel = e.vehicle.fuel < (lapsLeft + 0.25) * perLap;
+      const canRefuel = e.vehicle.car.pit?.refuel !== false;
+      const lowFuel = canRefuel && e.vehicle.fuel < (lapsLeft + 0.25) * perLap;
       const wornOut = tread < 0.28 && lapsLeft > 2;
-      if (lowFuel || wornOut) {
+      // regola delle due mescole: almeno una sosta, entro il 60% della gara
+      const ruleStop = this.compoundRuleActive() && e.compoundsUsed.size < 2 && lapsLeft >= 1
+        && (lapsLeft <= Math.max(1, Math.round(s.config.laps * 0.4)) || tread < 0.45);
+      if (lowFuel || wornOut || ruleStop) {
+        const cur = e.vehicle.tires[0].compound.name;
+        const comps = e.vehicle.car.tire.compounds;
+        // una mescola diversa da quella montata: la più dura se mancano tanti giri
+        const other = Object.keys(comps).filter((id) => comps[id].name !== cur);
+        const pick = e.compoundsUsed.size < 2 && other.length
+          ? (lapsLeft > s.config.laps * 0.5 ? other[other.length - 1] : other[0])
+          : e.vehicle.car.setup.compound;
         e.pitRequest = {
-          changeTyres: tread < 0.6,
-          compound: e.vehicle.car.setup.compound,
+          changeTyres: tread < 0.6 || ruleStop,
+          compound: pick,
           addFuel: Math.max(0, Math.min(e.vehicle.car.fuelCapacity, (lapsLeft + 1) * perLap) - e.vehicle.fuel),
         };
       }
       return;
     }
     this.playerRadioLap(e, lapsLeft);
+  }
+
+  /** La regola delle due mescole vale per la monoposto, in gare da almeno 5 giri con la corsia box. */
+  private compoundRuleActive(): boolean {
+    return !!this.car.rules?.twoCompounds && this.session.isRace && this.session.config.laps >= 5 && !!this.track.pit;
+  }
+
+  /** All'arrivo: chi non ha usato due mescole viene squalificato. */
+  private checkCompoundRule(e: CarEntity): void {
+    if (!e.competitor.finished || e.ruleChecked) return;
+    e.ruleChecked = true;
+    if (this.compoundRuleActive() && e.compoundsUsed.size < 2) {
+      e.competitor.dsq = 'una sola mescola';
+      if (e.isPlayer) this.radio('<b>Squalificato: in gara bisogna usare almeno due mescole diverse.</b>', 8);
+    }
+  }
+
+  /**
+   * Traguardo: nuovo giro per il sistema ibrido. OVERTAKE MODE: in gara, chi passa
+   * sul traguardo entro 1 s dall'auto che lo precede può usarlo nel giro seguente.
+   */
+  private lapLineHybrid(e: CarEntity): void {
+    const h = e.vehicle.hybrid;
+    if (!h.hasErs) return;
+    let earned = false;
+    const s = this.session;
+    if (s.isRace && s.state === 'corsa' && e.competitor.lapsDone >= 1) {
+      const st = s.standings();
+      const i = st.indexOf(e.competitor);
+      const ahead = i > 0 ? st[i - 1] : null;
+      if (ahead) {
+        const t = ahead.timing.timeAtDistance(e.competitor.timing.totalDistance);
+        earned = t !== null && e.competitor.timing.sessionTime - t < 1.0;
+      }
+    }
+    h.newLap(earned);
+    if (earned && !e.isPlayer) h.toggleOvertake(); // i bot lo usano subito
   }
 
   /** Comunicazioni dal box al pilota a ogni giro. */
@@ -681,9 +764,17 @@ export class Game {
       msgs.push(gaps);
       if (this.track.pit && fuelLaps < lapsLeft - 0.2) {
         const need = Math.max(0, (lapsLeft + 0.5) * perLap - v.fuel);
-        msgs.push(`<b>Benzina per ${fuelLaps.toFixed(1)} giri, ne mancano ${lapsLeft}: rientra e aggiungi ~${Math.ceil(need)} kg</b>`);
-        this.pitPlan.addFuel = Math.max(this.pitPlan.addFuel, Math.ceil(need));
+        if (v.car.pit?.refuel === false) {
+          msgs.push(`<b>Benzina per ${fuelLaps.toFixed(1)} giri, ne mancano ${lapsLeft}: risparmia (alza il piede prima delle frenate, modalità Ricarica)</b>`);
+        } else {
+          msgs.push(`<b>Benzina per ${fuelLaps.toFixed(1)} giri, ne mancano ${lapsLeft}: rientra e aggiungi ~${Math.ceil(need)} kg</b>`);
+          this.pitPlan.addFuel = Math.max(this.pitPlan.addFuel, Math.ceil(need));
+        }
       }
+      if (this.compoundRuleActive() && e.compoundsUsed.size < 2 && lapsLeft > 0) {
+        msgs.push('Regola: devi ancora montare una seconda mescola (pit stop; piano in pausa → 🛞 Strategia box).');
+      }
+      if (v.hybrid.overtakeAvailable) msgs.push('<b>Overtake mode disponibile: premi O</b>');
     }
     if (tread < 0.3 && !this.radioSaid.has('gomme30')) {
       this.radioSaid.add('gomme30');
@@ -724,8 +815,11 @@ export class Game {
       <div class="form">
         <label><input type="checkbox" data-p="tyres" ${plan.changeTyres ? 'checked' : ''}> Cambia le gomme</label>
         <label>Mescola <select data-p="compound">${compounds.map(([id, c]) => `<option value="${id}" ${plan.compound === id ? 'selected' : ''}>${c.name}</option>`).join('')}</select></label>
-        <label>Benzina da aggiungere (kg) <input type="number" min="0" max="${this.car.fuelCapacity}" step="1" value="${plan.addFuel}" data-p="fuel"></label>
-        <p class="small">A bordo: ${this.vehicle.fuel.toFixed(1)} kg · consumo ~${this.fuelPerLapOf(this.playerEntity).toFixed(2)} kg/giro · durata sosta stimata ~${serviceTime(plan).toFixed(0)} s</p>
+        ${this.car.pit?.refuel === false
+          ? '<p class="small">Niente rifornimento in questa categoria: la benzina deve bastare per tutta la gara.</p>'
+          : `<label>Benzina da aggiungere (kg) <input type="number" min="0" max="${this.car.fuelCapacity}" step="1" value="${plan.addFuel}" data-p="fuel"></label>`}
+        <p class="small">A bordo: ${this.vehicle.fuel.toFixed(1)} kg · consumo ~${this.fuelPerLapOf(this.playerEntity).toFixed(2)} kg/giro · durata sosta stimata ~${serviceTime(plan, this.car).toFixed(1)} s</p>
+        ${this.compoundRuleActive() ? `<p class="small">Regola: in gara servono due mescole diverse. Usate finora: ${[...this.playerEntity.compoundsUsed].join(', ')}.</p>` : ''}
       </div>`;
     this.overlay.showResults('🛞 Strategia box', html, [{ label: 'OK, riprendi', primary: true, act: () => this.togglePause() }]);
     document.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-p]').forEach((el) =>
@@ -889,6 +983,7 @@ export class Game {
       e.hint = p.index;
       e.s = p.s;
       e.d = p.d;
+      e.vehicle.hybrid.inAeroZone = this.aeroZones[p.index] === 1 && !e.pit;
       const allOff = e.vehicle.surfaces.every((s) => s.name === 'erba');
       if (!e.competitor.finished) e.competitor.timing.update(dt, p.s, allOff);
       if (e.isPlayer) {
@@ -994,6 +1089,20 @@ export class Game {
         case 'debug':
           this.debug.toggle();
           break;
+        case 'overtake': {
+          const h = this.vehicle.hybrid;
+          if (!h.hasErs) break;
+          if (h.toggleOvertake()) this.hud.message(h.overtakeActive ? '⚡ Overtake mode ATTIVO' : 'Overtake mode disattivato', 1.5);
+          else this.hud.message('Overtake mode non disponibile: devi passare sul traguardo entro 1 s da chi ti precede', 2.5);
+          break;
+        }
+        case 'ersMode': {
+          const h = this.vehicle.hybrid;
+          if (!h.hasErs) break;
+          h.mode = ERS_MODES[(ERS_MODES.indexOf(h.mode) + 1) % ERS_MODES.length];
+          this.hud.message(`🔋 Batteria: modalità ${ERS_MODE_NAMES[h.mode]}`, 1.5);
+          break;
+        }
       }
     }
   }
@@ -1162,6 +1271,14 @@ export class Game {
       trackName: this.track.data.name,
       carName: this.car.name,
       compound: v.tires[0].compound.name,
+      ers: v.hybrid.hasErs ? {
+        charge: v.hybrid.charge,
+        powerKW: v.hybrid.power / 1000,
+        mode: ERS_MODE_NAMES[v.hybrid.mode],
+        overtake: v.hybrid.overtakeActive ? 'attivo' : v.hybrid.overtakeAvailable ? 'disponibile' : 'no',
+        aeroOpen: v.hybrid.aeroOpen,
+        aeroZone: v.hybrid.inAeroZone,
+      } : null,
       tyres: v.tires.map((ty) => ({
         temp: ty.surfaceTemp, core: ty.coreTemp, pressure: ty.pressure,
         tread: ty.tread, grip: ty.gripFactor, optimal: ty.compound.optimalTemp,

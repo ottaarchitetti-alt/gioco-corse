@@ -12,9 +12,26 @@ export class CarView {
   readonly position = new THREE.Vector3();
   yaw = 0;
   private wheelBaseY: number[];
+  /** Monoposto: flap mobili delle ali (aerodinamica attiva) e fascia colorata della mescola */
+  private flaps: { node: THREE.Object3D; base: number; open: number }[] = [];
+  private stripeMats: THREE.MeshStandardMaterial[] = [];
+  private stripeFor = '';
 
   constructor(readonly rig: CarRig, private vehicle: Vehicle) {
     this.wheelBaseY = rig.wheelPivots.map((p) => p.position.y);
+    const front = rig.root.getObjectByName('aero_front_flap');
+    const rear = rig.root.getObjectByName('aero_rear_flap');
+    // aprendosi il flap si "appiattisce": ruota per ridurre l'incidenza
+    if (front) this.flaps.push({ node: front, base: front.rotation.x, open: -0.22 });
+    if (rear) this.flaps.push({ node: rear, base: rear.rotation.x, open: -0.55 });
+    const seen = new Set<THREE.Material>();
+    rig.root.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m && !Array.isArray(m) && m.name?.toLowerCase().startsWith('tyrestripe') && !seen.has(m)) {
+        seen.add(m);
+        this.stripeMats.push(m);
+      }
+    });
   }
 
   update(alpha: number): void {
@@ -43,5 +60,12 @@ export class CarView {
       rig.wheelSpinners[i].rotation.x = v.tires[i].spin;
     }
     if (rig.steeringWheel) rig.steeringWheel.rotation.z = -v.steeringWheelDeg * RAD;
+    for (const f of this.flaps) f.node.rotation.x = f.base + f.open * v.hybrid.aeroOpen;
+    // fascia della mescola montata (rossa morbida, gialla media, bianca dura)
+    const comp = v.tires[0].compound;
+    if (this.stripeMats.length && comp.name !== this.stripeFor) {
+      this.stripeFor = comp.name;
+      for (const m of this.stripeMats) m.color.set(comp.color ?? '#f6d21e');
+    }
   }
 }

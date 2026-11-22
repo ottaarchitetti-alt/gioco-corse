@@ -32,7 +32,7 @@ async function start(): Promise<void> {
 
   if (route === 'guida' && trackId) {
     const { Game } = await import('./game/Game');
-    const game = new Game(app, ui, trackId, params.get('da') === 'editor');
+    const game = new Game(app, ui, trackId, params.get('da') === 'editor', params.get('auto'));
     // Solo in sviluppo: il gioco è ispezionabile dalla console del browser (window.game, devTools)
     if (import.meta.env.DEV) {
       (window as unknown as { game: unknown }).game = game;

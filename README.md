@@ -16,8 +16,45 @@ Apri l'indirizzo nel browser (Chrome o Edge consigliati, anche per il volante).
 
 Altri comandi: `npm run typecheck` (controllo errori), `npm run build` (versione finale in `dist/`).
 
-## Stato: tutte le fasi completate (1–8)
-Il meteo (Fase 8) è stato rimandato come deciso all'inizio (D11).
+## Stato: fasi 1–14 completate
+Il meteo è stato rimandato come deciso all'inizio (D11). Piste piatte (D7, D18).
+
+### Fasi 9–14 — calendario 2026 e monoposto
+**Piste (Fase 9).** Le 24 piste del calendario 2026 sono incluse (menu → "Calendario 2026").
+Sono ricavate dai tracciati aperti del progetto f1-circuits (licenza MIT, vedi
+`public/tracks/LICENZE.md`) con lo script `tools/converti_circuiti.py`: lunghezza ufficiale,
+senso di marcia, traguardo, settori, corsia box e tribune generate in automatico.
+Si possono copiare e modificare nell'editor. Limiti: piste piatte; a Suzuka l'incrocio del
+"8" è a raso (in realtà è un ponte); i dati originali hanno pochi punti nelle curve, quindi
+alcune curve sono più strette del vero e i tempi sul giro sono più alti di quelli reali.
+
+**Monoposto 2026 (Fasi 10–13).** Nella schermata della sessione si sceglie la vettura
+(tutta la griglia usa la stessa: una sola classe, D20).
+- Modello 3D segnaposto: ruote scoperte con la fascia colorata della mescola, halo,
+  pance, ali con flap mobili, sospensioni; camera abitacolo e T-cam (tasto C)
+- Fisica: 768 kg, V6 turbo ~400 kW + motore elettrico 350 kW, 8 marce, freni carbonio,
+  sospensioni rigide, gomme da monoposto (morbida/media/dura con fasce rossa/gialla/bianca)
+- **Aerodinamica attiva**: nelle zone (rettilinei lunghi) a gas pieno le ali si aprono
+  (meno resistenza e meno carico), in frenata si richiudono. HUD: "ZONA ALI" / "ALI APERTE"
+- **Effetto suolo**: il carico cresce abbassando l'auto; se il fondo tocca terra lo perde.
+  Altezza da terra regolabile nell'assetto
+- **Ibrido (ERS)**: batteria da 4 MJ; recupero in frenata e in rilascio, "super clipping" a
+  fine rettilineo; spinta elettrica che cala sopra i 290 km/h. Modalità batteria (tasto **K**):
+  bilanciata, attacco, ricarica
+- **Overtake mode** (tasto **O**): se al traguardo eri entro 1 s da chi ti precede, nel giro
+  dopo hai spinta piena fino a 337 km/h e 0,5 MJ in più
+- Regole: niente rifornimento (la benzina deve bastare), pit stop ~4 s, obbligo di usare
+  due mescole in gara (da 5 giri in su), altrimenti squalifica
+- Bot: traiettoria e velocità con deportanza, zone di aerodinamica attiva e spinta elettrica;
+  usano subito l'Overtake mode; più prudenti al via e quando sono affiancati
+- Volante G29: tasto X = Overtake, cerchio = modalità batteria. Per la monoposto imposta in
+  G HUB **360°** di rotazione (la GT usa 540°)
+
+Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
+punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
+
+**Tempi indicativi dei bot "esperto"** con la monoposto: Monza ~1'30", con la GT
+all'Anello di prova ~53–54 s in "medio".
 
 ### Fase 8 — rifinitura
 - Impostazioni (menu principale e pausa): qualità grafica bassa/media/alta (ombre,
@@ -126,5 +163,8 @@ src/
 
 ## Dove mettere le mani
 - **Comportamento dell'auto**: `public/cars/gt_segnaposto.car.json` (oppure F2 in gioco, poi "Esporta auto").
+- **Monoposto**: `public/cars/monoposto_2026.car.json` (aerodinamica attiva, ERS, effetto suolo, box);
+  fisica ibrida in `src/physics/Hybrid.ts`, modello segnaposto in `src/render/PlaceholderF1.ts`.
+- **Elenco auto**: `public/cars/index.json`.
 - **Pista**: `public/tracks/anello_prova.track.json` (punti x/z in metri; dalla Fase 3 ci sarà l'editor).
 - **Il tuo modello 3D**: vedi `public/models/LEGGIMI.md`.

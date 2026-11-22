@@ -39,6 +39,65 @@ export interface Compound {
   optimalTemp: number;
   wearMul: number;
   heatMul: number;
+  /** Colore della fascia sul fianco della gomma (monoposto) */
+  color?: string;
+}
+
+/**
+ * AERODINAMICA ATTIVA (regolamento 2026): sui rettilinei le ali si "aprono"
+ * (modalità rettilineo: meno resistenza e meno deportanza), in frenata e in
+ * curva si richiudono (modalità curva: valori normali dragArea/liftArea).
+ */
+export interface ActiveAeroParams {
+  straightDragArea: number;
+  straightLiftArea: number;
+  /** Lunghezza minima (m) di un tratto quasi dritto per diventare zona di aerodinamica attiva */
+  minZoneLength: number;
+  /** Curvatura massima (1/m) considerata "rettilineo" */
+  maxCurvature: number;
+}
+
+/**
+ * EFFETTO SUOLO semplificato: il fondo genera più carico quanto più è vicino
+ * all'asfalto. Se tocca terra (talloneggia) perde una parte del carico.
+ */
+export interface GroundEffectParams {
+  /** Altezza da terra di riferimento del fondo (m), a cui vale liftArea */
+  refRideHeight: number;
+  /** Aumento relativo di carico per ogni "altezza di riferimento" in meno (es. 0.35) */
+  gain: number;
+  /** Frazione di carico persa quando il fondo tocca terra */
+  bottomingLoss: number;
+}
+
+/** SISTEMA IBRIDO (ERS): batteria, MGU-K che spinge e recupera in frenata. */
+export interface ErsParams {
+  /** Energia utilizzabile della batteria (MJ) */
+  batteryMJ: number;
+  /** Potenza massima erogata dal motore elettrico (kW) */
+  deployKW: number;
+  /** Potenza massima recuperata in frenata (kW) */
+  harvestKW: number;
+  /** Energia massima recuperabile per giro (MJ) */
+  harvestPerLapMJ: number;
+  /** Recupero in rilascio senza freno (kW) */
+  coastHarvestKW: number;
+  /** Sopra questa velocità la spinta elettrica cala fino a zero a taperEndKmh */
+  taperStartKmh: number;
+  taperEndKmh: number;
+  /** Con l'Overtake mode la spinta piena dura fino a questa velocità (poi cala come sopra) */
+  overtakeTaperStartKmh: number;
+  /** Energia extra concessa nel giro con l'Overtake mode (MJ) */
+  overtakeExtraMJ: number;
+}
+
+export interface PitParams {
+  /** Tempo fisso di una sosta (s): fermata, cric, ripartenza */
+  fixedTime: number;
+  /** Tempo per cambiare le 4 gomme (s) */
+  tyreChangeTime: number;
+  /** Rifornimento ammesso */
+  refuel: boolean;
 }
 
 export interface TireParams {
@@ -92,6 +151,8 @@ export interface CarSetup {
   /** Pressione a freddo (bar, relativa) */
   pressureFront: number;
   pressureRear: number;
+  /** Altezza da terra statica del fondo (m), solo auto a effetto suolo */
+  rideHeight?: number;
 }
 
 export interface CarParams {
@@ -101,6 +162,10 @@ export interface CarParams {
   model?: string;
   /** Se true e il GLB ha le ruote, passo/carreggiata/raggio vengono letti dal modello. */
   geometryFromModel?: boolean;
+  /** Forma del modello segnaposto: 'gt' (predefinito) o 'monoposto' */
+  body?: 'gt' | 'monoposto';
+  /** Ingombro per le collisioni (m): metà lunghezza e metà larghezza */
+  collision?: { halfLength: number; halfWidth: number };
 
   // --- Massa e geometria ---
   mass: number; // kg, con pilota, senza carburante
@@ -149,6 +214,15 @@ export interface CarParams {
   dragArea: number; // Cd·A (m²)
   liftArea: number; // Cl·A (m²), deportanza
   aeroBalanceFront: number; // frazione della deportanza all'anteriore
+  activeAero?: ActiveAeroParams;
+  groundEffect?: GroundEffectParams;
+  ers?: ErsParams;
+
+  // --- Box e regole ---
+  /** Tempi del pit stop; se assente valori GT (gomme 13 s, rifornimento sì) */
+  pit?: PitParams;
+  /** Regole di gara della categoria */
+  rules?: { twoCompounds?: boolean };
 
   // --- Carburante ---
   /** Carburante di partenza predefinito (kg) */
@@ -157,6 +231,10 @@ export interface CarParams {
   fuelCapacity: number;
   /** Rendimento termico del motore (frazione dell'energia del carburante che diventa lavoro) */
   engineEfficiency: number;
+  /** Taratura dei bot: frazione dell'aderenza nominale sfruttabile in curva (GT 0,85) */
+  botGripFactor?: number;
+  /** Stima iniziale del consumo (kg/km) prima di averlo misurato in pista */
+  fuelPerKmEst?: number;
 
   /** Assetto di partenza */
   setup: CarSetup;
@@ -167,4 +245,18 @@ export async function loadCar(url: string): Promise<CarParams> {
   const res = await fetch(url, { cache: 'no-cache' });
   if (!res.ok) throw new Error(`Impossibile caricare l'auto: ${url}`);
   return (await res.json()) as CarParams;
+}
+
+/** Una voce dell'elenco auto (public/cars/index.json). */
+export interface CarEntry {
+  id: string;
+  name: string;
+  file: string;
+  description?: string;
+}
+
+/** Elenco delle auto disponibili. */
+export async function listCars(): Promise<CarEntry[]> {
+  const res = await fetch('cars/index.json', { cache: 'no-cache' });
+  return res.ok ? ((await res.json()) as CarEntry[]) : [{ id: 'gt_segnaposto', name: 'GT', file: 'gt_segnaposto.car.json' }];
 }

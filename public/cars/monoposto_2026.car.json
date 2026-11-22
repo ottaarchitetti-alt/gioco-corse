@@ -1,0 +1,127 @@
+{
+  "id": "monoposto_2026",
+  "name": "Monoposto 2026",
+  "body": "monoposto",
+  "model": "models/monoposto.glb",
+  "geometryFromModel": true,
+
+  "mass": 768,
+  "yawInertia": 950,
+  "cgHeight": 0.28,
+  "wheelbase": 3.4,
+  "trackFront": 1.62,
+  "trackRear": 1.56,
+  "weightFront": 0.455,
+  "suspension": {
+    "unsprungMass": 32,
+    "springFront": 300000,
+    "springRear": 260000,
+    "bumpFront": 7000,
+    "reboundFront": 9500,
+    "bumpRear": 6500,
+    "reboundRear": 9000,
+    "arbFront": 160000,
+    "arbRear": 90000,
+    "pitchInertia": 700,
+    "rollInertia": 180
+  },
+
+  "wheelRadius": 0.36,
+  "wheelInertia": 1.0,
+  "tire": {
+    "mu": 2.05,
+    "nominalLoad": 3500,
+    "loadSensitivity": 0.16,
+    "peakSlipRatio": 0.1,
+    "peakSlipAngleDeg": 7.0,
+    "slideFactor": 0.76,
+    "falloff": 0.95,
+    "relaxLong": 0.22,
+    "relaxLat": 0.4,
+    "rollingResistance": 0.012,
+    "optimalPressure": 1.65,
+    "thermal": {
+      "surfaceCapacity": 2000,
+      "coreCapacity": 10000,
+      "airCoolBase": 28,
+      "airCoolSpeed": 3.4,
+      "surfaceToCore": 140,
+      "coreToAir": 15,
+      "trackConduct": 42,
+      "slipHeatFraction": 0.6,
+      "wearPerMJ": 0.0075
+    },
+    "compounds": {
+      "morbida": { "name": "Morbida", "muMul": 1.04, "optimalTemp": 98, "wearMul": 1.8, "heatMul": 1.15, "color": "#e8202a" },
+      "media": { "name": "Media", "muMul": 1.0, "optimalTemp": 104, "wearMul": 1.0, "heatMul": 1.0, "color": "#f6d21e" },
+      "dura": { "name": "Dura", "muMul": 0.965, "optimalTemp": 110, "wearMul": 0.6, "heatMul": 0.88, "color": "#f2f2f2" }
+    }
+  },
+
+  "steeringLockDeg": 360,
+  "steeringRatio": 10.5,
+
+  "idleRpm": 4000,
+  "maxRpm": 13000,
+  "torqueCurve": [
+    [4000, 230], [6000, 300], [8000, 345], [9500, 360],
+    [10500, 362], [11500, 345], [12500, 315], [13000, 300]
+  ],
+  "engineBrakeCurve": [[4000, 25], [8000, 45], [13000, 70]],
+  "engineInertia": 0.08,
+
+  "gears": [3.2, 2.62, 2.2, 1.88, 1.62, 1.41, 1.24, 1.1],
+  "reverseGear": 3.0,
+  "finalDrive": 4.6,
+  "drivetrainEfficiency": 0.92,
+  "shiftTime": 0.03,
+  "diffPreload": 60,
+  "diffPowerLock": 0.3,
+  "diffCoastLock": 0.2,
+
+  "maxBrakeTorque": 16000,
+  "brakeBiasFront": 0.56,
+
+  "dragArea": 1.0,
+  "liftArea": 4.1,
+  "aeroBalanceFront": 0.42,
+
+  "activeAero": {
+    "straightDragArea": 0.5,
+    "straightLiftArea": 1.9,
+    "minZoneLength": 280,
+    "maxCurvature": 0.0025
+  },
+  "groundEffect": {
+    "refRideHeight": 0.035,
+    "gain": 0.35,
+    "bottomingLoss": 0.25
+  },
+  "ers": {
+    "batteryMJ": 4.0,
+    "deployKW": 350,
+    "harvestKW": 350,
+    "harvestPerLapMJ": 8.5,
+    "coastHarvestKW": 120,
+    "taperStartKmh": 290,
+    "taperEndKmh": 355,
+    "overtakeTaperStartKmh": 337,
+    "overtakeExtraMJ": 0.5
+  },
+
+  "collision": { "halfLength": 2.55, "halfWidth": 0.96 },
+  "pit": { "fixedTime": 2.0, "tyreChangeTime": 2.4, "refuel": false },
+  "rules": { "twoCompounds": true },
+
+  "fuelKg": 70,
+  "fuelCapacity": 75,
+  "engineEfficiency": 0.46,
+  "fuelPerKmEst": 0.26,
+  "botGripFactor": 0.93,
+
+  "setup": {
+    "compound": "media",
+    "pressureFront": 1.35,
+    "pressureRear": 1.3
+  }
+}

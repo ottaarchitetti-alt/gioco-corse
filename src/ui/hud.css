@@ -186,3 +186,18 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .replay-bar input[type=range] { width: 260px; }
 .replay-bar button, .replay-bar select { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; border: 1px solid #39414c; background: #222933; color: var(--hud-fg); cursor: pointer; }
 .replay-bar button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+
+/* ---- Monoposto: batteria ERS, Overtake mode, aerodinamica attiva ---- */
+.hud-dash .ers { margin-top: 6px; }
+.hud-dash .ers .bat { position: relative; height: 14px; border-radius: 3px; background: #23282f; overflow: hidden; }
+.hud-dash .ers .bat i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #1f9d6b, #3ddc84); }
+.hud-dash .ers .bat.low i { background: var(--bad); }
+.hud-dash .ers .bat b { position: relative; font-size: 11px; line-height: 14px; font-weight: 600; }
+.hud-dash .ers-row { display: flex; gap: 6px; justify-content: center; margin-top: 4px; font-size: 11px; min-height: 16px; }
+.hud-dash .ers-row span { padding: 1px 5px; border-radius: 3px; background: #23282f; color: var(--hud-dim); }
+.hud-dash .ers-row .kw.dep { color: #7fd0ff; }
+.hud-dash .ers-row .kw.har { color: #3ddc84; }
+.hud-dash .ers-row .kw:empty { display: none; }
+.hud-dash .ers-row .ot { color: #ffb84a; }
+.hud-dash .ers-row .ot.on { background: #ff8a00; color: #111; font-weight: 700; }
+.hud-dash .ers-row .aero.on { background: #2f6fd8; color: #fff; font-weight: 700; }

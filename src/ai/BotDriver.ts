@@ -161,6 +161,10 @@ export class BotDriver {
     let attacker: (Traffic & { gap: number }) | null = null; // chi mi attacca da dietro
     let minD = -halfW, maxD = halfW; // limiti laterali per non stringere chi è affiancato
     let wantAvoid: number | null = null;
+    /** affiancato a un'auto un po' più avanti e troppo vicina di lato: cedo (sua velocità) */
+    let yieldTo: number | null = null;
+    // finestra "affiancati": dipende dalla lunghezza dell'auto (monoposto più lunga della GT)
+    const alongside = 2 * (v.car.collision?.halfLength ?? 2.3) + 0.9;
     const myLane = lineD + this.lane;
     this.flags = { yellow: false, blue: false };
     let blueFrom = 0;
@@ -179,9 +183,10 @@ export class BotDriver {
       }
 
       // affiancati: lascio spazio
-      if (Math.abs(gap) < 5.5) {
+      if (Math.abs(gap) < alongside) {
         if (o.d > d) maxD = Math.min(maxD, o.d - SIDE_GAP);
         else minD = Math.max(minD, o.d + SIDE_GAP);
+        if (gap > 0.8 && Math.abs(o.d - d) < SIDE_GAP - 0.2) yieldTo = Math.min(yieldTo ?? Infinity, o.speed);
         continue;
       }
       // dietro: possibile attaccante
@@ -316,6 +321,10 @@ export class BotDriver {
     if (this.flags.yellow) vt *= 0.93;
     if (this.flags.blue) vt *= 0.95;
     if (wantAvoid !== null) vt = Math.min(vt, 22);
+    // prima curva del via: tutti in gruppo, si frena un po' prima
+    if (myTotal < 1500) vt *= 0.96;
+    // ruote vicine a quelle di chi è affiancato e un po' davanti: alzo il piede e lo lascio andare
+    if (yieldTo !== null) vt = Math.min(vt, yieldTo * 0.97);
 
     // accodamento: velocità che permette di fermarsi dietro chi è davanti
     if (front && wantAvoid === null) {

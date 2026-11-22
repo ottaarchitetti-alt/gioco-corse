@@ -201,3 +201,7 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .hud-dash .ers-row .ot { color: #ffb84a; }
 .hud-dash .ers-row .ot.on { background: #ff8a00; color: #111; font-weight: 700; }
 .hud-dash .ers-row .aero.on { background: #2f6fd8; color: #fff; font-weight: 700; }
+
+/* ---- Minimappa ---- */
+.hud-minimap { top: 90px; right: 16px; padding: 6px; line-height: 0; }
+.hud-minimap canvas { display: block; }

@@ -31,7 +31,7 @@ export const emptyInput = (): DriverInput => ({
 });
 
 /** Azioni "di gioco" (non di guida) che scattano una volta per pressione. */
-export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug' | 'overtake' | 'ersMode';
+export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug' | 'overtake' | 'ersMode' | 'flashback';
 
 /** Un pedale calibrato: su quale asse sta e quanto vale a riposo e a fondo corsa. */
 export interface PedalCalibration {
@@ -73,6 +73,8 @@ export interface WheelSettings {
   /** Pulsanti della monoposto: Overtake mode e modalità della batteria (-1 = nessuno) */
   overtakeButton: number;
   ersModeButton: number;
+  /** Flashback: torna indietro di qualche secondo (-1 = nessuno) */
+  flashbackButton: number;
 }
 
 const DEFAULT_WHEEL: WheelSettings = {
@@ -93,6 +95,7 @@ const DEFAULT_WHEEL: WheelSettings = {
   shiftDownButton: 5, // paletta sinistra
   overtakeButton: 0, // G29: tasto X
   ersModeButton: 2, // G29: tasto cerchio
+  flashbackButton: 1, // G29: tasto quadrato
 };
 
 /** Converte le impostazioni salvate dalle versioni precedenti (Fasi 1–4). */
@@ -124,6 +127,7 @@ const ACTION_KEYS: Record<string, GameAction> = {
   F2: 'debug',
   KeyO: 'overtake',
   KeyK: 'ersMode',
+  Backspace: 'flashback',
 };
 
 export type InputDevice = 'tastiera' | 'gamepad' | 'volante';
@@ -166,7 +170,7 @@ export class InputManager {
 
   constructor() {
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'F2' || e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+      if (e.code === 'F2' || e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Backspace') e.preventDefault();
       if (!e.repeat) {
         const action = ACTION_KEYS[e.code];
         if (action) this.pendingActions.push(action);
@@ -357,10 +361,12 @@ export class InputManager {
       if (isWheel) {
         if (edge(this.wheel.overtakeButton)) this.pendingActions.push('overtake');
         if (edge(this.wheel.ersModeButton)) this.pendingActions.push('ersMode');
+        if (edge(this.wheel.flashbackButton)) this.pendingActions.push('flashback');
       } else {
         // gamepad: X = Overtake mode, B = modalità batteria
         if (edge(2)) this.pendingActions.push('overtake');
         if (edge(1)) this.pendingActions.push('ersMode');
+        if (edge(0)) this.pendingActions.push('flashback'); // A
       }
       if (!isWheel) {
         if (pressed[3] && !this.prevButtons[3]) this.pendingActions.push('camera');

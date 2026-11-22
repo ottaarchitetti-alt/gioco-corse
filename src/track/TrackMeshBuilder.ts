@@ -109,14 +109,14 @@ function boardTexture(label: string): THREE.CanvasTexture {
 }
 
 /**
- * Cartelli di frenata 300/200/100 m prima delle curve, sul lato esterno del rettilineo
+ * Cartelli di frenata 300/200/100/50/25 m prima delle curve, sul lato esterno del rettilineo
  * d'avvicinamento (come nei circuiti veri). Prima delle curve con rettilineo corto ci sono
  * solo i cartelli che ci stanno.
  */
 function buildBrakeBoards(track: TrackSpline): THREE.Group {
   const g = new THREE.Group();
   g.name = 'brake_boards';
-  const dists = [300, 200, 100];
+  const dists = [300, 200, 100, 50, 25];
   const faceMats = new Map(dists.map((d) => [d, new THREE.MeshStandardMaterial({ map: boardTexture(String(d)), roughness: 0.7 })]));
   const frameMat = new THREE.MeshStandardMaterial({ color: '#2a2d33', roughness: 0.6, metalness: 0.3 });
   const panelGeo = new THREE.PlaneGeometry(2.4, 1.5);

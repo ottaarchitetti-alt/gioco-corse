@@ -53,6 +53,14 @@ alcune curve sono più strette del vero e i tempi sul giro sono più alti di que
 Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
 punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
 
+**Aiuti alla guida.**
+- **Minimappa** in alto a destra: tracciato, traguardo, corsia box, avversari (puntini colorati)
+  e la tua auto (freccia bianca). Si nasconde quando apri la telemetria (T) o l'elenco giri (L).
+- **Cartelli di frenata** 300/200/100/50/25 m prima delle curve, generati su tutte le piste.
+- **Flashback** (prove libere e qualifica): **Backspace** (gamepad A, G29 quadrato) torna indietro
+  di 3 s; ogni pressione altri 3 s (fino a 20 s); premi l'acceleratore per ripartire. Il giro
+  in corso non vale più.
+
 **Tempi indicativi dei bot "esperto"** con la monoposto: Monza ~1'30", con la GT
 all'Anello di prova ~53–54 s in "medio".
 

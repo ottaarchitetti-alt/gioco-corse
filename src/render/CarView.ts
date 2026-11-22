@@ -46,7 +46,9 @@ export class CarView {
 
     const rig = this.rig;
     rig.root.position.copy(this.position);
-    rig.root.rotation.y = this.yaw;
+    // tutta la rotazione, non solo .y: un modello copiato (clone) da un'auto girata di più di 90°
+    // eredita la rotazione come (π, π−yaw, π) e scrivendo solo .y verrebbe disegnato storto
+    rig.root.rotation.set(0, this.yaw, 0);
 
     // Carrozzeria: posizione e inclinazioni calcolate dalle sospensioni
     const s = v.suspension;

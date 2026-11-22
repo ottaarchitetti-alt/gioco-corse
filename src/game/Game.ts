@@ -22,6 +22,8 @@ import { resolveCollisions } from '../physics/Collisions';
 import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../physics/Vehicle';
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
+import { Minimap } from '../ui/Minimap';
+import { FlashbackBuffer, restore, snapshot } from './Flashback';
 import type { LapRecord, TimingEvent } from '../race/LapTiming';
 import { Competitor, Session, SESSION_NAMES, type SessionConfig, type SessionEvent } from '../race/Session';
 import { cloneRig, loadCarRig, type CarRig } from '../render/AssetManager';
@@ -80,6 +82,8 @@ interface CarEntity {
   view: CarView;
   competitor: Competitor;
   bot: BotDriver | null;
+  /** colore della livrea (minimappa) */
+  color: string;
   /** indici di ricerca veloce sulla pista e sulla corsia box */
   wheelHints: number[];
   pitHints: number[];
@@ -117,6 +121,11 @@ export class Game {
   private sessionCfg: SessionConfig = loadJSON('session', DEFAULT_SESSION);
   private prefs = loadJSON('prefs', { ghost: true });
   private graph!: TelemetryGraph;
+  private minimap!: Minimap;
+  /** Flashback: fotografie degli ultimi secondi e stato della scelta (null = non attivo) */
+  private flashback = new FlashbackBuffer();
+  private fbClock = 0;
+  private fb: { index: number; back: number; time: number; armed: boolean } | null = null;
   private car!: CarParams;
   /** Copia "pulita" dell'auto per i bot (le regolazioni F2 valgono solo per te) */
   private botCar!: CarParams;
@@ -254,6 +263,8 @@ export class Game {
     this.cameras = new CameraRig(this.renderer.camera, this.playerEntity.view);
     this.hud = new Hud(this.uiEl);
     this.graph = new TelemetryGraph(this.uiEl);
+    this.minimap = new Minimap(this.track);
+    this.uiEl.appendChild(this.minimap.el);
     this.debug = new DebugPanel(car, this.aids, this.sim, {
       onAidsChange: () => saveJSON('aids', this.aids),
       onSimChange: () => {
@@ -338,6 +349,7 @@ export class Game {
       const rig = cloneRig(this.playerRig, b.color, parseInt(b.id.replace('bot_', '')) + 2);
       const e = this.createEntity(b.id, b.name, false, this.botCar, rig);
       e.bot = new BotDriver(this.line, e.vehicle, b.skill);
+      e.color = String(b.color);
       this.renderer.scene.add(rig.root);
       this.entities.push(e);
     }
@@ -353,6 +365,8 @@ export class Game {
     this.resultsTimer = 0;
     this.ghostRec.restart();
     this.replayRec.reset();
+    this.flashback.clear();
+    this.fb = null;
     this.placeForSession();
 
     this.hud?.showLapList(null);
@@ -1004,6 +1018,8 @@ export class Game {
     if (t.lap > 0) this.ghostRec.sample(t.current, this.vehicle.x, this.vehicle.z, this.vehicle.yaw);
 
     if (this.session.state !== 'finita') this.replayRec.record(dt, this.entities);
+    this.fbClock += dt;
+    if (this.flashbackAllowed()) this.flashback.record(dt, this.fbClock, () => this.takeFlashback());
     const byComp = new Map(this.entities.map((e) => [e.competitor, e]));
     this.session.update(dt, (c) => {
       const e = byComp.get(c)!;
@@ -1061,7 +1077,11 @@ export class Game {
         case 'reset':
           if (this.session.state !== 'semaforo') this.resetToTrack(this.playerEntity);
           break;
+        case 'flashback':
+          this.doFlashback();
+          break;
         case 'pause':
+          if (this.fb) { this.endFlashback(); break; }
           if (this.session.state !== 'finita' || !this.loop.paused) this.togglePause();
           break;
         case 'help':
@@ -1106,6 +1126,65 @@ export class Game {
         }
       }
     }
+  }
+
+  // =====================================================================
+  //  FLASHBACK: torna indietro e rifai la curva (prove libere e qualifica)
+  // =====================================================================
+
+  private flashbackAllowed(): boolean {
+    const st = this.session.state;
+    return !this.session.isRace && st !== 'semaforo' && st !== 'finita' && !this.playerEntity.pit;
+  }
+
+  private takeFlashback() {
+    const e = this.playerEntity;
+    return {
+      v: snapshot(e.vehicle),
+      t: snapshot(e.competitor.timing),
+      e: { s: e.s, d: e.d, hint: e.hint, wheelHints: [...e.wheelHints], fuelAtLine: e.fuelAtLine, fuelPerLap: e.fuelPerLap },
+    };
+  }
+
+  /** Tasto Flashback: la prima volta torna indietro di 3 s, ogni pressione successiva altri 3 s. */
+  private doFlashback(): void {
+    if (this.session.isRace) {
+      this.hud.message('Il flashback si usa solo in prove libere e qualifica', 2.5);
+      return;
+    }
+    if (!this.fb && !this.flashbackAllowed()) return;
+    const back = this.fb ? Math.min(this.fb.back + 3, FlashbackBuffer.SECONDS) : 3;
+    const now = this.fb ? this.fb.time : this.fbClock;
+    const found = this.flashback.find(now, back);
+    if (!found) {
+      this.hud.message('Flashback non ancora disponibile', 1.5);
+      return;
+    }
+    const e = this.playerEntity;
+    const st = found.frame.state as ReturnType<Game['takeFlashback']>;
+    restore(e.vehicle, st.v);
+    restore(e.competitor.timing, st.t);
+    Object.assign(e, { ...st.e, wheelHints: [...st.e.wheelHints] });
+    e.competitor.timing.invalidate('flashback');
+    this.fb = { index: found.index, back: now - found.frame.time, time: now, armed: this.fb?.armed ?? false };
+    if (!this.loop.paused) {
+      this.loop.paused = true;
+      this.sound.setPaused(true);
+      this.opponentSound.setPaused(true);
+    }
+    this.hud.message(`⏪ Flashback −${this.fb.back.toFixed(0)} s · Backspace: più indietro · Gas: riparti`, 600);
+  }
+
+  private endFlashback(): void {
+    if (!this.fb) return;
+    const at = this.fbClock - this.fb.back;
+    this.flashback.truncate(this.fb.index);
+    this.fbClock = at;
+    this.fb = null;
+    this.hud.message('Via!', 1);
+    this.loop.paused = false;
+    this.sound.setPaused(false);
+    this.opponentSound.setPaused(false);
   }
 
   private togglePause(show = true): void {
@@ -1227,6 +1306,12 @@ export class Game {
       return;
     }
     this.handleActions();
+    if (this.fb) {
+      // si riparte premendo l'acceleratore (prima va rilasciato, se era già premuto)
+      const thr = this.input.read(frameDt, 0, false).throttle;
+      if (thr < 0.1) this.fb.armed = true;
+      else if (this.fb.armed && thr > 0.4) this.endFlashback();
+    }
     const v = this.vehicle;
     for (const e of this.entities) e.view.update(alpha);
     this.cameras.update(frameDt, v.speed);
@@ -1285,6 +1370,13 @@ export class Game {
         tread: ty.tread, grip: ty.gripFactor, optimal: ty.compound.optimalTemp,
       })),
     }, frameDt);
+
+    // minimappa (nascosta quando a destra c'è la telemetria o l'elenco dei giri)
+    this.minimap.visible = !this.hud.telemetry.classList.contains('show') && this.hud.lapList.style.display !== 'block';
+    this.minimap.update(this.entities.map((e) => ({
+      x: e.vehicle.x, z: e.vehicle.z, yaw: e.vehicle.yaw, color: e.color ?? '#ffffff', player: e.isPlayer,
+      dim: !!e.pit || e.competitor.retired,
+    })));
 
     const avgT = (a: number, b: number) => (v.tires[a].effectiveTemp + v.tires[b].effectiveTemp) / 2;
     this.graph.push(frameDt, [

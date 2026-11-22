@@ -299,6 +299,9 @@ export class BotDriver {
     // la traiettoria cambia gradualmente (3 m/s di spostamento laterale)
     this.lane += clamp(laneAbs - lineD - this.lane, -3 * dt, 3 * dt);
     if (this.mode === 'linea' && wantAvoid === null) this.lane += clamp(-this.lane, -1.5 * dt, 1.5 * dt);
+    // lo spostamento è relativo alla traiettoria: se questa si allarga (curva) il bot finirebbe
+    // sull'erba → teniamo traiettoria + spostamento sempre dentro la carreggiata
+    this.lane = clamp(this.lane, -halfW - lineD, halfW - lineD);
 
     // =================== STERZO (pure pursuit) ===================
     const look = 5 + speed * 0.42; // metri
@@ -321,6 +324,9 @@ export class BotDriver {
     const sliding = Math.abs(beta) > 4 * RAD && v.speed > 8;
     if (sliding) delta += beta * 0.6;
     delta += clamp((clamp(lineD + this.lane, -halfW, halfW) - d) * 0.004, -0.02, 0.02) * (v.speed > 5 ? 1 : 0);
+    // al bordo della carreggiata (es. gomme fredde, curva presa larga): sterza verso l'interno
+    const edgeOver = Math.abs(d) - halfW;
+    if (edgeOver > 0 && v.speed > 5) delta -= Math.sign(d) * Math.min(0.06, edgeOver * 0.03);
     const maxDelta = ((v.car.steeringLockDeg / 2) / v.car.steeringRatio) * RAD;
     const rate = 4 * dt;
     this.steer += clamp(clamp(delta / maxDelta, -1, 1) - this.steer, -rate, rate);
@@ -335,6 +341,8 @@ export class BotDriver {
     vt *= 1 - 0.06 * Math.min(1, Math.abs(this.lane) / 3) * Math.min(1, k * 120);
     // in sorpasso si stacca un filo più tardi (e si rischia di più)
     if (this.mode === 'sorpasso') vt *= 1 + 0.02 * this.skill.aggression;
+    // al bordo: si alza il piede finché l'auto non rientra
+    if (edgeOver > 0) vt = Math.min(vt, v.speed * (1 - Math.min(0.06, edgeOver * 0.04)));
     if (this.flags.yellow) vt *= 0.93;
     if (this.flags.blue) vt *= 0.95;
     if (wantAvoid !== null) vt = Math.min(vt, 22);

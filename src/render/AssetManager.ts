@@ -63,6 +63,9 @@ export async function loadCarRig(car: CarParams, paintColor: THREE.ColorRepresen
  */
 export function cloneRig(src: CarRig, paintColor: THREE.ColorRepresentation, raceNumber?: number): CarRig {
   const root = src.root.clone(true);
+  // la copia parte "dritta" nell'origine (l'originale può essere ovunque in pista)
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
   const byName = (name: string) => root.getObjectByName(name) ?? null;
   applyLivery(root, paintColor, raceNumber);
   const wheelPivots = WHEEL_NAMES.map((n) => byName(n + '_pivot') as THREE.Group);

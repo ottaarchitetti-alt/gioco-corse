@@ -14,6 +14,7 @@ const CONTROLS = `
   <tr><td>Q / Ctrl sx</td><td>Marcia giù (da ferma in 1ª → retromarcia)</td></tr>
   <tr><td>C</td><td>Cambia telecamera (esterna, cofano, abitacolo)</td></tr>
   <tr><td>R</td><td>Rimetti l'auto in pista</td></tr>
+  <tr><td>Backspace</td><td>Flashback (prove e qualifica): torna indietro di 3 s per rifare la curva; premi ancora per altri 3 s, acceleratore per ripartire</td></tr>
   <tr><td>O</td><td>Monoposto: Overtake mode (se al traguardo eri entro 1 s da chi ti precede)</td></tr>
   <tr><td>K</td><td>Monoposto: modalità batteria (bilanciata, attacco, ricarica)</td></tr>
   <tr><td>L</td><td>Elenco dei giri della sessione (tempi e settori)</td></tr>
@@ -25,8 +26,8 @@ const CONTROLS = `
   <tr><td>P / Esc</td><td>Pausa</td></tr>
   <tr><td>H</td><td>Questo aiuto</td></tr>
 </table>
-<p>Gamepad: stick sinistro sterza, grilletti gas/freno, dorsali per cambiare, Y telecamera, X Overtake, B batteria.<br>
-Volante G29: tasto X = Overtake, cerchio = modalità batteria.<br>
+<p>Gamepad: stick sinistro sterza, grilletti gas/freno, dorsali per cambiare, Y telecamera, X Overtake, B batteria, A flashback.<br>
+Volante G29: tasto X = Overtake, cerchio = modalità batteria, quadrato = flashback.<br>
 Volante: si attiva appena lo muovi. Assi e pulsanti si regolano nel pannello F2 → Volante.</p>`;
 
 export class Overlay {

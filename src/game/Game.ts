@@ -122,6 +122,8 @@ export class Game {
   private prefs = loadJSON('prefs', { ghost: true });
   private graph!: TelemetryGraph;
   private minimap!: Minimap;
+  /** Il pilota ha finito la gara: dopo un attimo si simula velocemente l'arrivo degli altri */
+  private finishSim: { delay: number; started: boolean } | null = null;
   /** Flashback: fotografie degli ultimi secondi e stato della scelta (null = non attivo) */
   private flashback = new FlashbackBuffer();
   private fbClock = 0;
@@ -367,6 +369,7 @@ export class Game {
     this.replayRec.reset();
     this.flashback.clear();
     this.fb = null;
+    this.finishSim = null;
     this.placeForSession();
 
     this.hud?.showLapList(null);
@@ -440,7 +443,11 @@ export class Game {
         this.hud.message(this.session.isRace ? '🏁 Bandiera a scacchi' : '🏁 Tempo scaduto: completa il giro', 4);
         break;
       case 'finished':
-        if (e.c.isPlayer) this.hud.message(`🏁 Traguardo! Posizione ${e.c.position}`, 3);
+        if (e.c.isPlayer) {
+          this.hud.message(`🏁 Traguardo! Posizione ${e.c.position}`, 3);
+          // in gara non si aspetta che tutti finiscano l'ultimo giro: lo si simula (vedi finishRace)
+          if (this.session.isRace) this.finishSim = { delay: 2.5, started: false };
+        }
         break;
       case 'end':
         if (this.session.config.type === 'qualifica') this.lastQualiOrder = this.session.standings().map((c) => c.id);
@@ -1087,6 +1094,7 @@ export class Game {
           break;
         case 'pause':
           if (this.fb) { this.endFlashback(); break; }
+          if (this.finishSim?.started) break; // si stanno calcolando i risultati
           if (this.session.state !== 'finita' || !this.loop.paused) this.togglePause();
           break;
         case 'help':
@@ -1242,6 +1250,36 @@ export class Game {
     }
   }
 
+  /**
+   * Il pilota ha tagliato il traguardo: invece di aspettare che tutti finiscano l'ultimo giro,
+   * l'auto rientra ai box e la gara degli altri viene simulata velocemente (qualche decimo di
+   * secondo a fotogramma, senza disegnare) fino all'arrivo dell'ultimo. Poi i risultati.
+   */
+  private finishRace(frameDt: number): void {
+    const fs = this.finishSim!;
+    if (fs.delay > 0) {
+      fs.delay -= frameDt;
+      return;
+    }
+    if (!fs.started) {
+      fs.started = true;
+      const me = this.playerEntity;
+      if (!this.placeInPits(me)) me.vehicle.reset(1e5, 1e5, 0); // fuori dai piedi degli avversari
+      me.competitor.timing.resetPosition();
+      this.loop.paused = true;
+      this.sound.setPaused(true);
+      this.opponentSound.setPaused(true);
+      this.hud.message('🏁 Arrivo degli avversari…', 60);
+    }
+    const dt = this.loop.fixedDt;
+    const t0 = performance.now();
+    while (this.session.state !== 'finita' && performance.now() - t0 < 60) this.fixedUpdate(dt);
+    if (this.session.state === 'finita') {
+      this.finishSim = null;
+      this.resultsTimer = Math.min(this.resultsTimer, 0.3);
+    }
+  }
+
   /** Avvia il replay della sessione appena conclusa. */
   private startReplay(): void {
     this.overlay.hide();
@@ -1351,6 +1389,7 @@ export class Game {
       this.resultsTimer -= frameDt;
       if (this.resultsTimer <= 0) this.showResults();
     }
+    if (this.finishSim) this.finishRace(frameDt);
 
     // Fantasma: solo in prove/qualifica, durante un giro lanciato
     const t = this.player.timing;

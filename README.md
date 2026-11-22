@@ -53,6 +53,11 @@ alcune curve sono più strette del vero e i tempi sul giro sono più alti di que
 Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
 punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
 
+**Fine gara.** Quando tagli il traguardo non devi aspettare gli altri: rientri ai box e
+l'arrivo degli avversari viene simulato in pochi secondi, poi compaiono i risultati.
+I bot sono più forti (difficoltà media circa 1,3 s al giro più veloce) e si difendono in modo
+regolare: una sola mossa, mai in frenata, mai contro chi è già affiancato.
+
 **Aiuti alla guida.**
 - **Minimappa** in alto a destra: tracciato, traguardo, corsia box, avversari (puntini colorati)
   e la tua auto (freccia bianca). Si nasconde quando apri la telemetria (T) o l'elenco giri (L).

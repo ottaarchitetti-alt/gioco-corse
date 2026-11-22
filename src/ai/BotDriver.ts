@@ -43,9 +43,9 @@ export interface BotSkill {
 
 /** Livelli di difficoltà */
 export const DIFFICULTIES = {
-  facile: { label: 'Facile', grip: 0.83, brake: 0.78, inconsistency: 0.03, errorRate: 0.05, aggression: 0.4 },
-  medio: { label: 'Medio', grip: 0.88, brake: 0.84, inconsistency: 0.02, errorRate: 0.03, aggression: 0.6 },
-  difficile: { label: 'Difficile', grip: 0.93, brake: 0.9, inconsistency: 0.012, errorRate: 0.015, aggression: 0.75 },
+  facile: { label: 'Facile', grip: 0.86, brake: 0.82, inconsistency: 0.025, errorRate: 0.04, aggression: 0.45 },
+  medio: { label: 'Medio', grip: 0.92, brake: 0.89, inconsistency: 0.015, errorRate: 0.02, aggression: 0.7 },
+  difficile: { label: 'Difficile', grip: 0.95, brake: 0.92, inconsistency: 0.01, errorRate: 0.012, aggression: 0.8 },
   esperto: { label: 'Esperto', grip: 0.97, brake: 0.94, inconsistency: 0.006, errorRate: 0.007, aggression: 0.9 },
 } as const;
 export type Difficulty = keyof typeof DIFFICULTIES;
@@ -84,6 +84,8 @@ export class BotDriver {
   private followTime = 0;
   private defendUsed = false;
   private defendSide = 0;
+  /** Posizione laterale scelta per difendersi (fissa: una sola mossa) */
+  private defendFrom: number | null = null;
   // errori
   private wasBraking = false;
   private errType: ErrorType | null = null;
@@ -278,21 +280,33 @@ export class BotDriver {
           this.passTarget = null;
         } else {
           this.passTarget = tgt;
-          laneAbs = clamp(tgt.d + this.passSide * (SIDE_GAP + 0.4), -halfW, halfW);
+          // in sorpasso un po' di margine in più dal bordo (si è affiancati e al limite)
+          laneAbs = clamp(tgt.d + this.passSide * (SIDE_GAP + 0.4), -halfW + 0.6, halfW - 0.6);
           // non c'è più spazio da quel lato: rinuncia
           if (Math.abs(laneAbs - tgt.d) < SIDE_GAP - 0.3) this.mode = 'linea';
         }
       } else if (this.mode === 'difesa') {
-        laneAbs = clamp(lineD + this.defendSide * 2.6, -halfW, halfW);
-        if (this.modeTimer > 4 || !attacker) this.mode = 'linea';
+        // si copre il lato senza chiudere: resta almeno una macchina di spazio verso il bordo
+        laneAbs = clamp(d + this.defendSide * 2.2, -halfW + SIDE_GAP * 0.5, halfW - SIDE_GAP * 0.5);
+        if (this.defendFrom === null) this.defendFrom = laneAbs;
+        laneAbs = this.defendFrom; // una sola mossa: la posizione scelta non cambia più
+        if (this.modeTimer > 5 || !attacker) { this.mode = 'linea'; this.defendFrom = null; }
       } else {
-        // ---- difesa: una sola mossa per coprire l'interno ----
-        if (attacker && !this.defendUsed && Math.abs(attacker.d - d) > 1.2 && attacker.gap > -14) {
-          const inside = this.nextCornerSide(idx, 160);
+        // ---- difesa: UNA sola mossa, regolare ----
+        // chi attacca esce dalla scia da un lato: il bot copre quel lato (in rettilineo) o
+        // l'interno della prossima curva, se è lo stesso lato. Regole (come in F1):
+        //  - un solo cambio di direzione per difendersi (defendUsed), poi resta lì;
+        //  - mai in frenata (niente mosse mentre si stacca);
+        //  - mai se l'attaccante è già affiancato (lì si lascia una macchina di spazio, vedi sopra);
+        //  - si sposta di poco (copre la linea, non chiude contro l'erba).
+        const brakingZone = this.target(idx + Math.round(60 / step)) < v.speed * 0.9;
+        if (attacker && !this.defendUsed && !brakingZone && attacker.gap > -25 && attacker.gap < -alongside
+          && Math.abs(attacker.d - d) > 1.0) {
+          const inside = this.nextCornerSide(idx, 300);
           const attackSide = Math.sign(attacker.d - d);
-          if (inside !== 0 && attackSide === inside && Math.random() < this.skill.aggression * 0.05) {
+          if ((inside === 0 || attackSide === inside) && Math.random() < this.skill.aggression * 0.08) {
             this.mode = 'difesa';
-            this.defendSide = inside;
+            this.defendSide = attackSide;
             this.defendUsed = true;
             this.modeTimer = 0;
           }

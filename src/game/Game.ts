@@ -1142,6 +1142,8 @@ export class Game {
     return {
       v: snapshot(e.vehicle),
       t: snapshot(e.competitor.timing),
+      g: snapshot(this.ghostRec),
+      penalty: e.competitor.penalty,
       e: { s: e.s, d: e.d, hint: e.hint, wheelHints: [...e.wheelHints], fuelAtLine: e.fuelAtLine, fuelPerLap: e.fuelPerLap },
     };
   }
@@ -1163,16 +1165,21 @@ export class Game {
     const e = this.playerEntity;
     const st = found.frame.state as ReturnType<Game['takeFlashback']>;
     restore(e.vehicle, st.v);
+    // si torna esattamente a quel momento: anche il giro non valido e le penalità prese dopo
+    // vengono cancellati (il flashback serve a riprovare la curva, non è un taglio)
+    const wasValid = e.competitor.timing.valid;
     restore(e.competitor.timing, st.t);
+    restore(this.ghostRec, st.g);
+    e.competitor.penalty = st.penalty;
     Object.assign(e, { ...st.e, wheelHints: [...st.e.wheelHints] });
-    e.competitor.timing.invalidate('flashback');
+    const revalidated = !wasValid && e.competitor.timing.valid;
     this.fb = { index: found.index, back: now - found.frame.time, time: now, armed: this.fb?.armed ?? false };
     if (!this.loop.paused) {
       this.loop.paused = true;
       this.sound.setPaused(true);
       this.opponentSound.setPaused(true);
     }
-    this.hud.message(`⏪ Flashback −${this.fb.back.toFixed(0)} s · Backspace: più indietro · Gas: riparti`, 600);
+    this.hud.message(`⏪ Flashback −${this.fb.back.toFixed(0)} s${revalidated ? ' · giro di nuovo valido' : ''} · Backspace: più indietro · Gas: riparti`, 600);
   }
 
   private endFlashback(): void {

@@ -14,7 +14,7 @@ const CONTROLS = `
   <tr><td>Q / Ctrl sx</td><td>Marcia giù (da ferma in 1ª → retromarcia)</td></tr>
   <tr><td>C</td><td>Cambia telecamera (esterna, cofano, abitacolo)</td></tr>
   <tr><td>R</td><td>Rimetti l'auto in pista</td></tr>
-  <tr><td>Backspace</td><td>Flashback (prove e qualifica): torna indietro di 3 s per rifare la curva; premi ancora per altri 3 s, acceleratore per ripartire</td></tr>
+  <tr><td>Backspace</td><td>Flashback (prove e qualifica): torna indietro di 3 s per rifare la curva (giro non valido e penalità presi dopo vengono cancellati); premi ancora per altri 3 s, acceleratore per ripartire</td></tr>
   <tr><td>O</td><td>Monoposto: Overtake mode (se al traguardo eri entro 1 s da chi ti precede)</td></tr>
   <tr><td>K</td><td>Monoposto: modalità batteria (bilanciata, attacco, ricarica)</td></tr>
   <tr><td>L</td><td>Elenco dei giri della sessione (tempi e settori)</td></tr>

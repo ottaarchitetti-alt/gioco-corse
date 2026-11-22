@@ -25,9 +25,9 @@ export class MainMenu {
       error = e instanceof Error ? e.message : String(e);
     }
 
-    const rows = tracks.map((t) => `
+    const row = (t: TrackInfo) => `
       <li class="track-row">
-        <div class="track-name">${esc(t.name)} ${t.builtin ? '<span class="badge">inclusa</span>' : ''}</div>
+        <div class="track-name">${esc(t.name)} ${t.lengthM ? `<span class="len">${(t.lengthM / 1000).toFixed(3).replace('.', ',')} km</span>` : ''} ${t.builtin && !t.group ? '<span class="badge">inclusa</span>' : ''}</div>
         <div class="track-actions">
           <button class="primary" data-act="guida" data-id="${t.id}">Guida</button>
           ${t.builtin
@@ -37,7 +37,17 @@ export class MainMenu {
           <button data-act="esporta" data-id="${t.id}">Esporta</button>
           ${t.builtin ? '' : `<button class="danger" data-act="elimina" data-id="${t.id}">Elimina</button>`}
         </div>
-      </li>`).join('');
+      </li>`;
+    // piste senza gruppo (tue + incluse) in alto, poi i gruppi (es. Calendario 2026)
+    const groups = new Map<string, TrackInfo[]>();
+    for (const t of tracks) {
+      const g = t.group ?? '';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g)!.push(t);
+    }
+    const rows = [...groups].sort((a, b) => (a[0] ? 1 : 0) - (b[0] ? 1 : 0)).map(([g, list]) =>
+      (g ? `<li class="track-group">${esc(g)} <span class="len">${list.length} piste</span></li>` : '') + list.map(row).join(''),
+    ).join('');
 
     this.el.innerHTML = `
       <div class="menu-card">

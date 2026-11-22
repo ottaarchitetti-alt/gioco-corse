@@ -15,6 +15,8 @@
 }
 .track-name { font-size: 17px; font-weight: 600; }
 .track-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.track-group { margin: 18px 0 2px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.track-name .len, .track-group .len { font-size: 12px; font-weight: 500; color: var(--hud-dim); margin-left: 6px; letter-spacing: 0; text-transform: none; }
 .badge { font-size: 11px; font-weight: 500; color: var(--hud-dim); border: 1px solid #39414c; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
 .menu-page .hint, .menu-page .empty { color: var(--hud-dim); font-size: 13px; }
 .menu-page .err { color: var(--bad); }

@@ -1,3 +1,175 @@
 [
-  { "id": "anello_prova", "name": "Anello di prova", "file": "anello_prova.track.json" }
+  {
+    "id": "anello_prova",
+    "name": "Anello di prova",
+    "file": "anello_prova.track.json"
+  },
+  {
+    "id": "cal26_01_melbourne",
+    "name": "01 · Melbourne – Albert Park",
+    "file": "cal26_01_melbourne.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5278
+  },
+  {
+    "id": "cal26_02_shanghai",
+    "name": "02 · Shanghai",
+    "file": "cal26_02_shanghai.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5451
+  },
+  {
+    "id": "cal26_03_suzuka",
+    "name": "03 · Suzuka",
+    "file": "cal26_03_suzuka.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5807
+  },
+  {
+    "id": "cal26_04_sakhir",
+    "name": "04 · Sakhir (Bahrain)",
+    "file": "cal26_04_sakhir.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5412
+  },
+  {
+    "id": "cal26_05_jeddah",
+    "name": "05 · Jeddah",
+    "file": "cal26_05_jeddah.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 6175
+  },
+  {
+    "id": "cal26_06_miami",
+    "name": "06 · Miami",
+    "file": "cal26_06_miami.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5412
+  },
+  {
+    "id": "cal26_07_montreal",
+    "name": "07 · Montréal – Gilles Villeneuve",
+    "file": "cal26_07_montreal.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4361
+  },
+  {
+    "id": "cal26_08_monaco",
+    "name": "08 · Monaco",
+    "file": "cal26_08_monaco.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 3337
+  },
+  {
+    "id": "cal26_09_barcellona",
+    "name": "09 · Barcellona – Catalunya",
+    "file": "cal26_09_barcellona.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4655
+  },
+  {
+    "id": "cal26_10_spielberg",
+    "name": "10 · Spielberg – Red Bull Ring",
+    "file": "cal26_10_spielberg.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4318
+  },
+  {
+    "id": "cal26_11_silverstone",
+    "name": "11 · Silverstone",
+    "file": "cal26_11_silverstone.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5891
+  },
+  {
+    "id": "cal26_12_spa",
+    "name": "12 · Spa-Francorchamps",
+    "file": "cal26_12_spa.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 7004
+  },
+  {
+    "id": "cal26_13_hungaroring",
+    "name": "13 · Hungaroring",
+    "file": "cal26_13_hungaroring.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4381
+  },
+  {
+    "id": "cal26_14_zandvoort",
+    "name": "14 · Zandvoort",
+    "file": "cal26_14_zandvoort.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4259
+  },
+  {
+    "id": "cal26_15_monza",
+    "name": "15 · Monza",
+    "file": "cal26_15_monza.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5793
+  },
+  {
+    "id": "cal26_16_madring",
+    "name": "16 · Madrid – Madring",
+    "file": "cal26_16_madring.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5474
+  },
+  {
+    "id": "cal26_17_baku",
+    "name": "17 · Baku",
+    "file": "cal26_17_baku.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 6003
+  },
+  {
+    "id": "cal26_18_singapore",
+    "name": "18 · Singapore – Marina Bay",
+    "file": "cal26_18_singapore.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4928
+  },
+  {
+    "id": "cal26_19_austin",
+    "name": "19 · Austin – COTA",
+    "file": "cal26_19_austin.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5514
+  },
+  {
+    "id": "cal26_20_citta_del_messico",
+    "name": "20 · Città del Messico",
+    "file": "cal26_20_citta_del_messico.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4304
+  },
+  {
+    "id": "cal26_21_interlagos",
+    "name": "21 · San Paolo – Interlagos",
+    "file": "cal26_21_interlagos.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 4309
+  },
+  {
+    "id": "cal26_22_las_vegas",
+    "name": "22 · Las Vegas",
+    "file": "cal26_22_las_vegas.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 6201
+  },
+  {
+    "id": "cal26_23_lusail",
+    "name": "23 · Lusail (Qatar)",
+    "file": "cal26_23_lusail.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5380
+  },
+  {
+    "id": "cal26_24_yas_marina",
+    "name": "24 · Abu Dhabi – Yas Marina",
+    "file": "cal26_24_yas_marina.track.json",
+    "group": "Calendario 2026",
+    "lengthM": 5281
+  }
 ]

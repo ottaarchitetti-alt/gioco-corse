@@ -28,7 +28,7 @@ export function buildTrackMesh(track: TrackSpline, anisotropy: number): THREE.Gr
   const asphalt = new THREE.MeshStandardMaterial({ map: asphaltTexture(anisotropy), roughness: 0.92, metalness: 0 });
   group.add(buildRoad(track, asphalt));
   group.add(buildKerbs(track));
-  group.add(buildGround(anisotropy));
+  group.add(buildGround(anisotropy, track));
   group.add(buildStartLine(track));
   group.add(buildGridMarks(track));
   group.add(buildGantry(track));
@@ -189,8 +189,11 @@ function buildKerbs(track: TrackSpline): THREE.Mesh {
   return mesh;
 }
 
-function buildGround(anisotropy: number): THREE.Mesh {
-  const size = 5000;
+function buildGround(anisotropy: number, track: TrackSpline): THREE.Mesh {
+  // il prato copre la pista con 1,5 km di margine (minimo 5 km di lato)
+  const xs = track.samples.map((s) => s.x), zs = track.samples.map((s) => s.z);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const size = Math.ceil(Math.max(5000, Math.max(...xs) - Math.min(...xs) + 3000, Math.max(...zs) - Math.min(...zs) + 3000) / 8) * 8;
   const tex = grassTexture(anisotropy);
   tex.repeat.set(size / 8, size / 8);
   const mesh = new THREE.Mesh(
@@ -200,6 +203,7 @@ function buildGround(anisotropy: number): THREE.Mesh {
     new THREE.MeshStandardMaterial({ map: tex, roughness: 1, polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 8 }),
   );
   mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(Math.round(cx / 8) * 8, 0, Math.round(cz / 8) * 8);
   mesh.name = 'ground';
   mesh.receiveShadow = true;
   return mesh;
@@ -261,15 +265,19 @@ function buildTrees(track: TrackSpline): THREE.Group {
   const minZ = Math.min(...track.samples.map((s) => s.z)) - 250;
   const maxZ = Math.max(...track.samples.map((s) => s.z)) + 250;
 
+  const coarse = track.samples.filter((_, i) => i % 10 === 0);
   const positions: [number, number, number][] = [];
   let tries = 0;
-  const maxTrees = Math.round(450 * qualityParams(loadSettings().quality).treeFactor);
-  while (positions.length < maxTrees && tries < 6000) {
+  // più alberi sulle piste lunghe (450 ogni ~2,5 km, al massimo 1400)
+  const maxTrees = Math.round(Math.min(1400, 450 * Math.max(1, track.length / 2500)) * qualityParams(loadSettings().quality).treeFactor);
+  while (positions.length < maxTrees && tries < maxTrees * 14) {
     tries++;
     const x = minX + rnd() * (maxX - minX);
     const z = minZ + rnd() * (maxZ - minZ);
-    const p = track.project(x, z);
-    if (Math.abs(p.d) < p.sample.width / 2 + 30) continue; // non troppo vicino alla pista
+    // non troppo vicino alla pista (controllo su un campione ogni ~20 m: veloce anche a Spa)
+    let near = false;
+    for (const c of coarse) if ((c.x - x) ** 2 + (c.z - z) ** 2 < (c.width / 2 + 32) ** 2) { near = true; break; }
+    if (near) continue;
     if (track.pit) {
       const q = track.pit.project(x, z);
       if (q.s > -20 && q.s < track.pit.length + 20 && Math.abs(q.d) < track.pit.data.width / 2 + 30) continue;

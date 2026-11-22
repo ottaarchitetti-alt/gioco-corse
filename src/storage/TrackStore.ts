@@ -12,12 +12,17 @@ export interface TrackInfo {
   name: string;
   builtin: boolean;
   updated?: number;
+  /** Gruppo nel menu (es. "Calendario 2026") */
+  group?: string;
+  lengthM?: number;
 }
 
 interface BuiltinEntry {
   id: string;
   name: string;
   file: string;
+  group?: string;
+  lengthM?: number;
 }
 
 interface StoredTrack {
@@ -48,7 +53,7 @@ async function builtins(): Promise<BuiltinEntry[]> {
 
 export const TrackStore = {
   async list(): Promise<TrackInfo[]> {
-    const b = (await builtins()).map((e) => ({ id: e.id, name: e.name, builtin: true }));
+    const b = (await builtins()).map((e) => ({ id: e.id, name: e.name, builtin: true, group: e.group, lengthM: e.lengthM }));
     let user: TrackInfo[] = [];
     try {
       const stored = await dbAll<StoredTrack>('tracks');

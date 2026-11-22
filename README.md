@@ -57,7 +57,7 @@ punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più v
 - **Minimappa** in alto a destra: tracciato, traguardo, corsia box, avversari (puntini colorati)
   e la tua auto (freccia bianca). Si nasconde quando apri la telemetria (T) o l'elenco giri (L).
 - **Cartelli di frenata** 300/200/100/50/25 m prima delle curve, generati su tutte le piste.
-- **Flashback** (prove libere e qualifica): **Backspace** (gamepad A, G29 quadrato) torna indietro
+- **Flashback** (prove, qualifica e gara: in gara tornano indietro anche tutti gli avversari): **Backspace** (gamepad A, G29 quadrato) torna indietro
   di 3 s; ogni pressione altri 3 s (fino a 20 s); premi l'acceleratore per ripartire. Si torna
   esattamente a quel momento: se il giro era valido resta valido (un'uscita di pista o una
   penalità presa dopo viene cancellata).

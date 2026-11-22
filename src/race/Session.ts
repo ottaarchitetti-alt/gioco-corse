@@ -57,6 +57,9 @@ export class Competitor {
   finishTime: number | null = null;
   /** Penalità di tempo accumulate (s) */
   penalty = 0;
+  /** Giri completati e distanza percorsa all'arrivo (dopo l'arrivo l'auto continua a girare) */
+  finishLaps = 0;
+  finishDistance = 0;
   /** Ritirato (es. senza benzina): non viene classificato */
   retired = false;
   /** Squalificato (es. regola delle due mescole): motivo */
@@ -159,6 +162,7 @@ export class Session {
         }
         this.onEvent({ type: 'go' });
       }
+      this.updatePositions(); // in griglia: posizioni = ordine di partenza
       return;
     }
 
@@ -198,6 +202,8 @@ export class Session {
   private finish(c: Competitor): void {
     c.finished = true;
     c.finishTime = c.timing.sessionTime;
+    c.finishLaps = c.lapsDone;
+    c.finishDistance = c.timing.totalDistance;
     this.onEvent({ type: 'finished', c });
   }
 
@@ -213,8 +219,14 @@ export class Session {
     if (this.isRace) {
       list.sort((a, b) => {
         if (!!a.dsq !== !!b.dsq) return a.dsq ? 1 : -1;
-        if (a.finished && b.finished) return a.finishTime! + a.penalty - (b.finishTime! + b.penalty);
-        if (a.finished !== b.finished) return a.finished ? -1 : 1;
+        // all'arrivo conta prima il numero di giri (un doppiato che taglia il traguardo prima non
+        // passa davanti a chi è a pieni giri), poi il tempo con le penalità
+        if (a.finished && b.finished) return (b.finishLaps - a.finishLaps) || (a.finishTime! + a.penalty - (b.finishTime! + b.penalty));
+        if (a.finished !== b.finished) {
+          const f = a.finished ? a : b, o = a.finished ? b : a;
+          if (o.lapsDone > f.finishLaps) return a.finished ? 1 : -1; // (caso limite) più giri di chi ha finito
+          return a.finished ? -1 : 1;
+        }
         if (a.retired !== b.retired) return a.retired ? 1 : -1;
         return b.timing.totalDistance - a.timing.totalDistance;
       });
@@ -238,12 +250,15 @@ export class Session {
     if (c.dsq) return 'Squalificato';
     if (c.retired) return 'Ritirato';
     if (i <= 0) return this.isRace ? 'Leader' : c.timing.best ? '' : '–';
+    if (this.state === 'semaforo') return ''; // in griglia: nessun distacco
     const ref = toLeader ? st[0] : st[i - 1];
     if (this.isRace) {
-      const lapsBehind = Math.floor((ref.timing.totalDistance - c.timing.totalDistance) / this.trackLength);
-      if (lapsBehind >= 1 && !(c.finished && ref.finished && c.lapsDone === ref.lapsDone)) {
-        return `+${lapsBehind} ${lapsBehind === 1 ? 'giro' : 'giri'}`;
-      }
+      // dopo l'arrivo le auto fanno il giro di rientro: conta la distanza al traguardo
+      const dist = (x: Competitor) => (x.finished ? x.finishDistance : x.timing.totalDistance);
+      const lapsBehind = c.finished && ref.finished
+        ? ref.finishLaps - c.finishLaps
+        : Math.floor((dist(ref) - dist(c)) / this.trackLength);
+      if (lapsBehind >= 1) return `+${lapsBehind} ${lapsBehind === 1 ? 'giro' : 'giri'}`;
       if (c.finished && ref.finished) return `+${(c.finishTime! + c.penalty - ref.finishTime! - ref.penalty).toFixed(3)}`;
       const t = ref.timing.timeAtDistance(c.timing.totalDistance);
       if (t === null) return '';

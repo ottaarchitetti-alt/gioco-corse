@@ -41,7 +41,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 .hud-standings .srow.me { background: rgba(255, 204, 0, 0.18); }
 .hud-standings .p { width: 18px; text-align: right; font-weight: 700; }
 .hud-standings .n { flex: 1; }
-.hud-standings .g { color: var(--hud-dim); }
+.hud-standings .g { color: var(--hud-dim); min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.hud-standings .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .hud-lights { top: 70px; left: 50%; transform: translateX(-50%); display: none; gap: 12px; padding: 12px 18px; background: rgba(10, 10, 10, 0.85); }
 .hud-lights span { width: 34px; height: 34px; border-radius: 50%; background: #2a1515; border: 3px solid #111; }

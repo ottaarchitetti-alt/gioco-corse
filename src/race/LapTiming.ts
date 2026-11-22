@@ -133,7 +133,11 @@ export class LapTiming {
    */
   update(dt: number, s: number, allWheelsOff: boolean): void {
     if (!this.running) {
+      // in griglia (prima del via): la distanza parte dalla posizione sulla griglia, così chi
+      // parte più indietro non risulta "avanti" (prima tutti partivano da 0)
       this.prevS = s;
+      this.totalDistance = s > this.length / 2 ? s - this.length : s;
+      this.checkpoints = this.totalDistance < 0 ? [] : [0];
       return;
     }
     const L = this.length;

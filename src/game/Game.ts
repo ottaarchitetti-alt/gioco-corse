@@ -375,6 +375,11 @@ export class Game {
     if (run) {
       this.overlay.hide();
       this.loop.paused = false;
+      // l'audio può essere in pausa (menu di pausa, risultati, replay): si riaccende
+      if (this.started) {
+        this.sound.setPaused(false);
+        this.opponentSound.setPaused(false);
+      }
       this.hud.message(this.session.isRace ? 'Gara: attendi lo spegnimento dei semafori' : `${this.session.name}: buon lavoro!`, 3);
     }
   }
@@ -1134,26 +1139,34 @@ export class Game {
 
   private flashbackAllowed(): boolean {
     const st = this.session.state;
-    return !this.session.isRace && st !== 'semaforo' && st !== 'finita' && !this.playerEntity.pit;
+    return st !== 'semaforo' && st !== 'finita' && !this.player.finished;
   }
 
+  /** Fotografia di tutta la sessione: auto, bot, box, cronometraggio, sessione, fantasma, replay. */
   private takeFlashback() {
-    const e = this.playerEntity;
     return {
-      v: snapshot(e.vehicle),
-      t: snapshot(e.competitor.timing),
-      g: snapshot(this.ghostRec),
-      penalty: e.competitor.penalty,
-      e: { s: e.s, d: e.d, hint: e.hint, wheelHints: [...e.wheelHints], fuelAtLine: e.fuelAtLine, fuelPerLap: e.fuelPerLap },
+      ents: this.entities.map((e) => ({
+        e,
+        v: snapshot(e.vehicle),
+        c: snapshot(e.competitor),
+        b: e.bot ? snapshot(e.bot) : null,
+        pit: e.pit ? { ref: e.pit, st: snapshot(e.pit) } : null,
+        f: {
+          s: e.s, d: e.d, hint: e.hint, wheelHints: [...e.wheelHints], pitHints: [...e.pitHints],
+          stall: e.stall, pitRequest: e.pitRequest ? { ...e.pitRequest } : null, pitStops: e.pitStops,
+          fuelAtLine: e.fuelAtLine, fuelPerLap: e.fuelPerLap, ruleChecked: e.ruleChecked,
+          compoundsUsed: new Set(e.compoundsUsed),
+        },
+      })),
+      session: snapshot(this.session),
+      ghost: snapshot(this.ghostRec),
+      replay: snapshot(this.replayRec),
+      contacts: this.contactCount,
     };
   }
 
   /** Tasto Flashback: la prima volta torna indietro di 3 s, ogni pressione successiva altri 3 s. */
   private doFlashback(): void {
-    if (this.session.isRace) {
-      this.hud.message('Il flashback si usa solo in prove libere e qualifica', 2.5);
-      return;
-    }
     if (!this.fb && !this.flashbackAllowed()) return;
     const back = this.fb ? Math.min(this.fb.back + 3, FlashbackBuffer.SECONDS) : 3;
     const now = this.fb ? this.fb.time : this.fbClock;
@@ -1162,17 +1175,27 @@ export class Game {
       this.hud.message('Flashback non ancora disponibile', 1.5);
       return;
     }
-    const e = this.playerEntity;
     const st = found.frame.state as ReturnType<Game['takeFlashback']>;
-    restore(e.vehicle, st.v);
-    // si torna esattamente a quel momento: anche il giro non valido e le penalità prese dopo
-    // vengono cancellati (il flashback serve a riprovare la curva, non è un taglio)
-    const wasValid = e.competitor.timing.valid;
-    restore(e.competitor.timing, st.t);
-    restore(this.ghostRec, st.g);
-    e.competitor.penalty = st.penalty;
-    Object.assign(e, { ...st.e, wheelHints: [...st.e.wheelHints] });
-    const revalidated = !wasValid && e.competitor.timing.valid;
+    // si torna esattamente a quel momento, tutti insieme (in gara anche i bot): anche il giro
+    // non valido e le penalità prese dopo vengono cancellati
+    const wasValid = this.player.timing.valid;
+    for (const x of st.ents) {
+      const e = x.e;
+      restore(e.vehicle, x.v);
+      restore(e.competitor, x.c);
+      if (e.bot && x.b) restore(e.bot, x.b);
+      e.pit = x.pit ? x.pit.ref : null;
+      if (x.pit) restore(x.pit.ref, x.pit.st);
+      Object.assign(e, {
+        ...x.f, wheelHints: [...x.f.wheelHints], pitHints: [...x.f.pitHints],
+        pitRequest: x.f.pitRequest ? { ...x.f.pitRequest } : null, compoundsUsed: new Set(x.f.compoundsUsed),
+      });
+    }
+    restore(this.session, st.session);
+    restore(this.ghostRec, st.ghost);
+    restore(this.replayRec, st.replay);
+    this.contactCount = st.contacts;
+    const revalidated = !wasValid && this.player.timing.valid;
     this.fb = { index: found.index, back: now - found.frame.time, time: now, armed: this.fb?.armed ?? false };
     if (!this.loop.paused) {
       this.loop.paused = true;

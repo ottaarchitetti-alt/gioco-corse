@@ -1,8 +1,9 @@
 /**
  * FLASHBACK: torna indietro di qualche secondo e rifai la curva.
  *
- * Ogni 0,2 s si salva una "fotografia" completa dello stato dell'auto del pilota (posizione,
- * velocità, gomme, motore, sospensioni, batteria, carburante) e del suo cronometraggio.
+ * Ogni 0,2 s si salva una "fotografia" completa dello stato di tutte le auto (posizione,
+ * velocità, gomme, motore, sospensioni, batteria, carburante), dei bot, dei box, del
+ * cronometraggio e della sessione: in gara si torna indietro tutti insieme.
  * Le fotografie degli ultimi 20 s stanno in un buffer circolare.
  *
  * La fotografia è una copia generica e profonda degli oggetti: numeri, booleani, stringhe e
@@ -11,7 +12,19 @@
  */
 
 /** Campi che puntano a dati di configurazione condivisi: si salvano per riferimento */
-const REF_KEYS = new Set(['car', 'params', 'compound', 'surfaces', 'groundQuery', 'wheelPos', 'onEvent', 'callback']);
+const REF_KEYS = new Set([
+  'car', 'params', 'compound', 'surfaces', 'groundQuery', 'wheelPos', 'onEvent', 'callback',
+  // bot, box, sessione: pista, traiettoria, profilo di velocità, auto e concorrenti sono riferimenti
+  'pit', 'stall', 'vehicle', 'line', 'skill', 'profile', 'plan', 'track', 'config', 'competitors', 'onService',
+]);
+/**
+ * Elenchi che crescono soltanto (tempi di passaggio, giri, traccia del giro, fantasma, replay):
+ * invece di copiarli ogni 0,2 s si ricordano l'elenco e la sua lunghezza, e al ripristino si taglia.
+ * (Quando il codice ne crea uno nuovo, il vecchio resta intatto: va bene lo stesso.)
+ */
+const APPEND_KEYS = new Set(['checkpoints', 'trace', 'laps', 'frames', 'data']);
+
+type AppendMark = { __arr: unknown[]; len: number };
 
 type Snap = { [k: string]: unknown };
 
@@ -26,8 +39,11 @@ export function snapshot(o: object, depth = 0): Snap {
     const v = (o as Snap)[k];
     if (typeof v === 'function') continue;
     if (REF_KEYS.has(k) || isPlainData(v)) out[k] = v;
+    else if (APPEND_KEYS.has(k) && Array.isArray(v)) out[k] = { __arr: v, len: v.length } satisfies AppendMark;
     else out[k] = copyValue(v, depth + 1);
   }
+  // l'oggetto originale: al ripristino si rimette quello (es. il controllore dei box)
+  out.__ref = o;
   return out;
 }
 
@@ -43,9 +59,14 @@ function copyValue(v: unknown, depth: number): unknown {
 export function restore(o: object, s: Snap): void {
   const target = o as Snap;
   for (const k of Object.keys(s)) {
+    if (k === '__ref') continue;
     const sv = s[k];
     const cur = target[k];
-    if (REF_KEYS.has(k) || isPlainData(sv)) {
+    if (sv && typeof sv === 'object' && '__arr' in (sv as object)) {
+      const m = sv as AppendMark;
+      m.__arr.length = m.len;
+      target[k] = m.__arr;
+    } else if (REF_KEYS.has(k) || isPlainData(sv)) {
       target[k] = sv;
     } else if (ArrayBuffer.isView(sv)) {
       if (ArrayBuffer.isView(cur) && (cur as unknown as Float32Array).length === (sv as unknown as Float32Array).length) (cur as unknown as Float32Array).set(sv as unknown as Float32Array);
@@ -56,11 +77,18 @@ export function restore(o: object, s: Snap): void {
       for (let i = 0; i < sv.length; i++) {
         const x = sv[i];
         if (isPlainData(x)) arr[i] = x;
-        else if (arr[i] && typeof arr[i] === 'object' && !Array.isArray(x)) restore(arr[i] as object, x as Snap);
+        else if (!Array.isArray(x) && (x as Snap).__ref) {
+          arr[i] = (x as Snap).__ref;
+          restore(arr[i] as object, x as Snap);
+        } else if (arr[i] && typeof arr[i] === 'object' && !Array.isArray(x)) restore(arr[i] as object, x as Snap);
         else arr[i] = copyValue(x, 0);
       }
     } else if (sv instanceof Set || sv instanceof Map) {
       target[k] = sv;
+    } else if ((sv as Snap).__ref) {
+      // stesso oggetto di allora (anche se nel frattempo era stato sostituito o tolto)
+      target[k] = (sv as Snap).__ref;
+      restore(target[k] as object, sv as Snap);
     } else if (cur && typeof cur === 'object') {
       restore(cur, sv as Snap);
     } else {

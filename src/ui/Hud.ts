@@ -274,8 +274,11 @@ export class Hud {
 
   private renderStandings(rows: StandingRow[]): void {
     this.standings.style.display = rows.length > 1 ? '' : 'none';
-    this.standings.innerHTML = rows
-      .slice(0, 12)
+    // le prime 12; se il pilota è più indietro, la sua riga prende il posto dell'ultima
+    let shown = rows.slice(0, 12);
+    const me = rows.find((r) => r.player);
+    if (me && !shown.includes(me)) shown = [...rows.slice(0, 11), me];
+    this.standings.innerHTML = shown
       .map((r) => `<div class="srow ${r.player ? 'me' : ''}"><span class="p">${r.pos}</span><span class="n">${r.name}</span><span class="g mono">${r.gap}</span></div>`)
       .join('');
   }

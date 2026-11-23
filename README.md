@@ -54,11 +54,12 @@ alcune curve sono più strette del vero e i tempi sul giro sono più alti di que
 Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
 punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
 
-**Grafica in pixel art (predefinita).** La scena 3D viene disegnata come un'illustrazione in
+**Grafica in pixel art (facoltativa).** La scena 3D viene disegnata come un'illustrazione in
 pixel art: risoluzione ridotta con pixel netti, contorni scuri sulle sagome e linee sugli
 spigoli, luce "a bande" (4 toni), palette ridotta con retinatura, cielo disegnato a fasce con
 nuvole a pixel; HUD e menu con font pixel (Pixelify Sans, licenza OFL) e bordi squadrati.
-In Impostazioni: stile **Pixel art / Realistico** e grandezza dei pixel (fine, medio, grosso).
+Predefinita è la grafica realistica; in Impostazioni si può scegliere **Pixel art** e la
+grandezza dei pixel (fine, medio, grosso).
 Codice in `src/render/PixelArt.ts` e `src/ui/pixel.css`.
 
 **Fine gara.** Quando tagli il traguardo non devi aspettare gli altri: rientri ai box e

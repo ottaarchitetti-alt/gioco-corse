@@ -25,14 +25,23 @@ export interface GameSettings {
   pixelSize: PixelSize;
 }
 
-const DEFAULTS: GameSettings = { quality: 'alta', showFps: false, volume: 0.5, opponentVolume: 0.6, style: 'pixel', pixelSize: 'medio' };
+const DEFAULTS: GameSettings = { quality: 'alta', showFps: false, volume: 0.5, opponentVolume: 0.6, style: 'realistico', pixelSize: 'medio' };
+/** versione delle impostazioni grafiche: con la 2 lo stile predefinito torna "realistico" */
+const STYLE_VERSION = 2;
 
 export function loadSettings(): GameSettings {
-  return { ...DEFAULTS, ...loadJSON<Partial<GameSettings>>('settings', DEFAULTS) };
+  const raw = loadJSON<Partial<GameSettings> & { styleVersion?: number }>('settings', DEFAULTS);
+  const s = { ...DEFAULTS, ...raw };
+  if ((raw.styleVersion ?? 1) < STYLE_VERSION) {
+    // la pixel art era diventata predefinita: si torna alla grafica di prima (resta selezionabile)
+    s.style = 'realistico';
+    saveJSON('settings', { ...s, styleVersion: STYLE_VERSION });
+  }
+  return s;
 }
 
 export function saveSettings(s: GameSettings): void {
-  saveJSON('settings', s);
+  saveJSON('settings', { ...s, styleVersion: STYLE_VERSION });
 }
 
 /** Parametri grafici derivati dalla qualità */

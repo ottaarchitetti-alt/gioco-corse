@@ -14,6 +14,18 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function installDevTools(game: any): void {
+  /**
+   * Nei test il pilota è "fuori scena": dopo ogni passo lo si nasconde ai bot (lontano di lato,
+   * in movimento, non sull'erba), altrimenti il gioco lo rimette in pista fermo e i bot lo urtano.
+   */
+  const tick = (): void => {
+    game.fixedUpdate(game.loop.fixedDt);
+    const p = game.playerEntity;
+    p.vehicle.reset(100000, 100000, 0);
+    p.d = 10000;
+    p.vehicle.speed = 50;
+    p.vehicle.surfaces = [];
+  };
   const autopilot = (laps: number, opts: { latG?: number; records?: boolean; session?: any; keepSession?: boolean } = {}): string => {
     const g = game;
     const v = g.vehicle;
@@ -112,7 +124,7 @@ export function installDevTools(game: any): void {
     try {
       let acc = 0;
       while (t < laps * 120 && botsE.some((e: any) => e.competitor.lapsDone < laps) && g.session.state !== 'finita') {
-        g.fixedUpdate(dt);
+        tick();
         t += dt;
         acc += dt;
         if (acc > 3 && g.session.state === 'corsa') {
@@ -163,7 +175,7 @@ export function installDevTools(game: any): void {
         const c0 = g.contactCount;
         let t = 0;
         while (t < (opts.seconds ?? 100) && g.session.state !== 'finita') {
-          g.fixedUpdate(g.loop.fixedDt);
+          tick();
           t += g.loop.fixedDt;
           for (const b of botsE) {
             if (first.has(b)) continue;
@@ -189,5 +201,51 @@ export function installDevTools(game: any): void {
     return out;
   };
 
-  (window as any).devTools = { autopilot, bots, incidenti };
+  /**
+   * Passo di UN bot da solo in pista, confrontato col suo profilo di velocità teorico.
+   *   devTools.passo({ difficulty: 'medio', grip: 1, laps: 3 })
+   * grip: forza il profilo con quella frazione di aderenza (altrimenti quello del livello)
+   */
+  const passo = (opts: { difficulty?: string; grip?: number; brake?: number; laps?: number; clip?: number } = {}): string => {
+    const g = game;
+    const prevCfg = { ...g.sessionCfg };
+    const origRead = g.input.read.bind(g.input);
+    const origReset = g.resetToTrack.bind(g);
+    const origMsg = g.hud.message;
+    g.input.read = () => ({ steer: 0, throttle: 0, brake: 1, shiftUp: false, shiftDown: false });
+    g.hud.message = () => {};
+    g.recordsEnabled = false;
+    let resets = 0;
+    g.resetToTrack = (e: any) => { if (e.isPlayer) return; resets++; origReset(e); };
+    try {
+      g.startSession({ ...g.sessionCfg, type: 'libere', minutes: 0, laps: 9, opponents: 1, difficulty: opts.difficulty ?? 'medio' }, false);
+      g.playerEntity.vehicle.reset(100000, 100000, 0);
+      const b = g.entities.find((e: any) => !e.isPlayer);
+      const line = b.bot.line, n = line.n, dt = g.loop.fixedDt;
+      if (opts.clip) b.bot.clipKmh = opts.clip;
+      if (opts.grip) b.bot.profile = line.speedProfile(b.vehicle.car, opts.grip, opts.brake ?? opts.grip);
+      let tp = 0;
+      for (let i = 0; i < n; i++) tp += line.ds[i] / Math.max(b.bot.profile[i], 1);
+      let t = 0, batt = 0, cnt = 0, tc = 0, grass = 0;
+      while (b.competitor.lapsDone < (opts.laps ?? 3) && t < 600) {
+        tick();
+        t += dt;
+        if (b.competitor.lapsDone >= 1) {
+          batt += b.vehicle.hybrid.charge; cnt++;
+          if (b.vehicle.tcActive) tc += dt;
+          if (b.vehicle.surfaces.filter((x: any) => x.name === 'erba').length >= 2) grass += dt;
+        }
+      }
+      const laps = b.competitor.timing.laps.map((l: any) => l.time.toFixed(2) + (l.valid ? '' : '*')).join(' ');
+      return `giri ${laps} | profilo ${tp.toFixed(2)} | batteria media ${(batt / Math.max(cnt, 1) * 100).toFixed(0)}% | TC ${tc.toFixed(1)} s | erba ${grass.toFixed(1)} s | errori ${b.bot.errors} | riposizionamenti ${resets}`;
+    } finally {
+      g.input.read = origRead;
+      g.resetToTrack = origReset;
+      g.hud.message = origMsg;
+      g.recordsEnabled = true;
+      g.startSession(prevCfg, false);
+    }
+  };
+
+  (window as any).devTools = { autopilot, bots, incidenti, passo, game };
 }

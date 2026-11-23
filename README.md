@@ -104,6 +104,22 @@ controsterzano quanto serve), danno gas in modo progressivo, correggono in antic
 allargano verso il bordo, in sorpasso guardano la posizione reale in pista e in un tornante
 rallentano se sono all'interno. Prova degli incidenti: `devTools.incidenti(6)` nella console.
 
+**Bot molto più veloci (novembre 2026).** Misurando il giro di un bot contro il suo profilo di
+velocità teorico, si perdevano 11 s a Melbourne per difetti di guida, non di difficoltà:
+- gas parziale vicino alla velocità obiettivo (ali attive chiuse, spinta elettrica dimezzata) →
+  ora gas a fondo finché si è sotto l'obiettivo, freno deciso quando si è sopra;
+- controllo di trazione "a scatti" per 14 s al giro → ora il bot dosa il gas cercando lo
+  slittamento ottimale delle ruote posteriori (il TC interviene ~1 s al giro);
+- gomme calde scambiate per fredde (riferimento di aderenza sbagliato) → riferimento dalla mescola;
+- batteria sprecata in prima/seconda con le ruote che slittano → spinta elettrica solo da terza
+  in su e "super clipping" (ricarica col motore) sopra 270 km/h: recupera tutti gli 8,5 MJ al giro;
+- frenate anticipate (guardava troppo avanti) e freno quasi mollato con l'auto appena di traverso;
+- il profilo considera l'effetto suolo (curve veloci) e le difficoltà sono ricalibrate.
+Sorpassi: si preparano in rettilineo; se alla frenata non si è quasi affiancati si rinuncia.
+Risultato (monoposto, bot da solo): Melbourne Medio 1'42" → 1'36", Esperto 1'40" → 1'36";
+Monaco Medio 1'34" → 1'28"; GT a Spa Esperto 2'40" → 2'38". Contatti in gruppo come prima.
+Misura: `devTools.passo({ difficulty: 'medio' })` (giri di un bot da solo e profilo teorico).
+
 **Tempi indicativi dei bot "esperto"** con la monoposto: Monza ~1'30", con la GT
 all'Anello di prova ~53–54 s in "medio".
 

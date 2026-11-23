@@ -345,8 +345,8 @@ export function botSkillOf(c: Career, d: Driver): BotSkill {
   const base = DIFFICULTIES[c.difficulty];
   const k = (d.skill - 70) / 100; // un pilota da 70 è "nella media" del livello
   return {
-    grip: clamp(base.grip + k * 0.07, 0.75, 0.995),
-    brake: clamp(base.brake + k * 0.07, 0.7, 0.98),
+    grip: clamp(base.grip + k * 0.07, 0.8, 1.03),
+    brake: clamp(base.brake + k * 0.05, 0.7, 0.92),
     inconsistency: clamp(base.inconsistency * (1 - k), 0.004, 0.05),
     errorRate: clamp(base.errorRate * (1 - k * 1.5), 0.003, 0.08),
     aggression: clamp(d.aggression / 100, 0, 1),

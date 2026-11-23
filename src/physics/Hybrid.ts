@@ -50,6 +50,8 @@ export class HybridSystem {
   aeroOpen = 0;
   /** La pista dice se l'auto è in una zona di aerodinamica attiva (lo imposta Game) */
   inAeroZone = false;
+  /** Quanto della spinta elettrica usare (0..1): lo regola il bot per non sprecarla dove le ruote slittano */
+  deployScale = 1;
 
   constructor(private car: CarParams) {
     this.battery = (car.ers?.batteryMJ ?? 0) * 1e6 * 0.6;
@@ -166,7 +168,8 @@ export class HybridSystem {
     const start = this.overtakeActive ? e.overtakeTaperStartKmh : e.taperStartKmh;
     const end = start + (e.taperEndKmh - e.taperStartKmh);
     const taper = kmh <= start ? 1 : clamp(1 - (kmh - start) / (end - start), 0, 1);
-    let p = e.deployKW * 1000 * taper * clamp((throttle - 0.6) / 0.35, 0, 1);
+    let p = e.deployKW * 1000 * taper * clamp((throttle - 0.6) / 0.35, 0, 1) * this.deployScale;
+    if (p <= 0) return 0;
     p = Math.min(p, usable / dt);
     const torque = Math.min(MGUK_MAX_CRANK_TORQUE, p / crankOmega);
     p = torque * crankOmega;

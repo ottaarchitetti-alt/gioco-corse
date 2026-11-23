@@ -158,7 +158,10 @@ export class RacingLine {
     // aderenza "efficace" della gomma calda: la sensibilità al carico e il trasferimento
     // di carico riducono quella nominale (tarato in simulazione: 1,0 ≈ limite reale)
     const mu = car.tire.mu * (car.botGripFactor ?? 0.85) * gripScale;
-    const kDown = (0.5 * AIR_DENSITY * car.liftArea) / m; // accelerazione extra per (m/s)²
+    // effetto suolo (monoposto): col carico l'auto si abbassa e il fondo genera più deportanza
+    // (in media circa un terzo del guadagno massimo); conta solo nelle curve veloci
+    const ground = car.groundEffect ? 1 + car.groundEffect.gain * 0.3 : 1;
+    const kDown = (0.5 * AIR_DENSITY * car.liftArea * ground) / m; // accelerazione extra per (m/s)²
     const kDragCorner = (0.5 * AIR_DENSITY * car.dragArea) / m;
     // ali aperte nelle zone di aerodinamica attiva: meno resistenza in rettilineo
     const kDragStraight = car.activeAero ? (0.5 * AIR_DENSITY * car.activeAero.straightDragArea) / m : kDragCorner;

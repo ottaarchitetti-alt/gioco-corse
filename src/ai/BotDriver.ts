@@ -43,10 +43,10 @@ export interface BotSkill {
 
 /** Livelli di difficoltà */
 export const DIFFICULTIES = {
-  facile: { label: 'Facile', grip: 0.86, brake: 0.82, inconsistency: 0.025, errorRate: 0.04, aggression: 0.45 },
-  medio: { label: 'Medio', grip: 0.92, brake: 0.89, inconsistency: 0.015, errorRate: 0.02, aggression: 0.7 },
-  difficile: { label: 'Difficile', grip: 0.95, brake: 0.92, inconsistency: 0.01, errorRate: 0.012, aggression: 0.8 },
-  esperto: { label: 'Esperto', grip: 0.97, brake: 0.94, inconsistency: 0.006, errorRate: 0.007, aggression: 0.9 },
+  facile: { label: 'Facile', grip: 0.9, brake: 0.84, inconsistency: 0.02, errorRate: 0.03, aggression: 0.45 },
+  medio: { label: 'Medio', grip: 0.96, brake: 0.87, inconsistency: 0.01, errorRate: 0.012, aggression: 0.7 },
+  difficile: { label: 'Difficile', grip: 0.99, brake: 0.89, inconsistency: 0.007, errorRate: 0.007, aggression: 0.8 },
+  esperto: { label: 'Esperto', grip: 1.01, brake: 0.9, inconsistency: 0.004, errorRate: 0.004, aggression: 0.9 },
 } as const;
 export type Difficulty = keyof typeof DIFFICULTIES;
 
@@ -103,6 +103,15 @@ export class BotDriver {
   private prevD: number | null = null;
   /** Gas del passo precedente (il gas si apre in modo progressivo) */
   private lastThrottle = 0;
+  /** Migliore aderenza delle gomme vista finora (gomme in temperatura) */
+  private feelRef = 0;
+  private feelAvg = 0;
+  /** Posizione della traiettoria ideale al passo precedente */
+  private prevLineD: number | null = null;
+  /** Velocità sopra cui si ricarica la batteria col motore termico (km/h) */
+  clipKmh = 270;
+  /** Gas massimo che le ruote posteriori riescono a scaricare a terra (dosaggio in trazione) */
+  private tractionLimit = 1;
   /** Bandiere viste in questo passo */
   flags = { yellow: false, blue: false };
 
@@ -235,6 +244,8 @@ export class BotDriver {
 
     // =================== DECISIONI ===================
     this.modeTimer += dt;
+    // si sta per frenare (o si sta già frenando) per una curva
+    const brakingZone = this.target(idx + Math.round(60 / step)) < v.speed * 0.9;
     let laneAbs = lineD; // posizione laterale desiderata (assoluta)
     if (front && front.gap < 30) this.followTime += dt;
     else this.followTime = 0;
@@ -247,7 +258,8 @@ export class BotDriver {
       if (this.mode === 'cede') this.mode = 'linea';
 
       // ---- inizio sorpasso ----
-      if (this.mode !== 'sorpasso' && front && front.gap < 28) {
+      // un sorpasso si prepara in rettilineo: non si butta dentro in frenata da lontano
+      if (this.mode !== 'sorpasso' && front && front.gap < 28 && !brakingZone) {
         const faster = v.speed > front.speed + 1.5 || this.target(idx) > front.speed + 2.5;
         const stuck = this.followTime > 3 - this.skill.aggression * 1.5;
         if ((faster || stuck) && Math.random() < 0.2 + this.skill.aggression * 0.5) {
@@ -284,6 +296,9 @@ export class BotDriver {
           laneAbs = clamp(tgt.d + this.passSide * (SIDE_GAP + 0.4), -halfW + 0.6, halfW - 0.6);
           // non c'è più spazio da quel lato: rinuncia
           if (Math.abs(laneAbs - tgt.d) < SIDE_GAP - 0.3) this.mode = 'linea';
+          // all'inizio della frenata bisogna essere almeno quasi affiancati, altrimenti si
+          // rinuncia e ci si rimette in coda (come un pilota vero: niente "siluri" da lontano)
+          if (brakingZone && tgt.gap > alongside * 0.6) { this.mode = 'linea'; this.passTarget = null; }
         }
       } else if (this.mode === 'difesa') {
         // si copre il lato senza chiudere: resta almeno una macchina di spazio verso il bordo
@@ -299,7 +314,6 @@ export class BotDriver {
         //  - mai in frenata (niente mosse mentre si stacca);
         //  - mai se l'attaccante è già affiancato (lì si lascia una macchina di spazio, vedi sopra);
         //  - si sposta di poco (copre la linea, non chiude contro l'erba).
-        const brakingZone = this.target(idx + Math.round(60 / step)) < v.speed * 0.9;
         if (attacker && !this.defendUsed && !brakingZone && attacker.gap > -25 && attacker.gap < -alongside
           && Math.abs(attacker.d - d) > 1.0) {
           const inside = this.nextCornerSide(idx, 300);
@@ -318,10 +332,21 @@ export class BotDriver {
     if (wantAvoid !== null) laneAbs = wantAvoid;
     laneAbs = clamp(laneAbs, minD, Math.max(minD, maxD));
     // la traiettoria cambia gradualmente (3 m/s di spostamento laterale)
+    const onLine = Math.abs(this.lane) < 0.5;
+    const prevAbs = this.prevLineD === null ? null : this.prevLineD + this.lane;
+    this.prevLineD = lineD;
     this.lane += clamp(laneAbs - lineD - this.lane, -3 * dt, 3 * dt);
     if (this.mode === 'linea' && wantAvoid === null) this.lane += clamp(-this.lane, -1.5 * dt, 1.5 * dt);
-    // lo spostamento è relativo alla traiettoria: se questa si allarga (curva) il bot finirebbe
-    // sull'erba → teniamo traiettoria + spostamento sempre dentro la carreggiata
+    // Lo spostamento è relativo alla traiettoria. Dove questa attraversa la carreggiata (curve
+    // veloci) uno spostamento relativo trascinerebbe l'auto verso il bordo più in fretta di quanto
+    // possa seguirlo: fuori traiettoria la posizione mirata si sposta verso il bordo al massimo di
+    // 3 m/s (verso il centro, liberamente).
+    if (!onLine && prevAbs !== null) {
+      const abs = lineD + this.lane;
+      const maxOut = Math.abs(prevAbs) + 3 * dt;
+      if (Math.abs(abs) > maxOut && Math.abs(abs) > 2) this.lane = Math.sign(abs) * maxOut - lineD;
+    }
+    // e comunque traiettoria + spostamento sempre dentro la carreggiata
     this.lane = clamp(this.lane, -halfW - lineD, halfW - lineD);
 
     // =================== STERZO (pure pursuit) ===================
@@ -383,19 +408,34 @@ export class BotDriver {
     out.steer = this.steer;
 
     // =================== VELOCITÀ ===================
-    const ahead = (idx + Math.round((speed * 0.22) / step)) % n;
+    // poco anticipo: il profilo contiene già i punti di frenata (serve solo a coprire il ritardo
+    // con cui freni e gas agiscono)
+    const ahead = (idx + Math.round((speed * 0.1) / step)) % n;
+    // aderenza "sentita" rispetto alla migliore vista finora (gomme in temperatura): il profilo
+    // vale per gomme calde, si rallenta solo se le gomme rendono meno di così (fredde, usurate)
     const feel = v.tires.reduce((a, t) => a + t.gripFactor, 0) / 4;
-    let vt = Math.min(this.target(ahead), this.target(idx) + 3) * Math.sqrt(Math.min(1, feel / 0.98));
+    // (media su qualche secondo: un valore isolato, es. il primo passo, non fa da riferimento).
+    // All'inizio il riferimento è quello tipico di gomme in temperatura (~93% della mescola):
+    // così con le gomme fredde del primo giro il bot sa di dover andare più piano.
+    if (this.feelRef === 0) this.feelRef = this.feelAvg = v.tires[0].compound.muMul * 0.93;
+    this.feelAvg += (feel - this.feelAvg) * Math.min(1, dt / 3);
+    this.feelRef = Math.max(this.feelRef, this.feelAvg);
+    let vt = Math.min(this.target(ahead), this.target(idx) + 3) * Math.sqrt(Math.min(1, feel / this.feelRef));
     // fuori traiettoria il raggio cambia: all'interno di una curva è più stretto (in un tornante
     // anche della metà) → velocità limite = v·√(R'/R), e bisogna frenare in tempo per arrivarci
-    if (Math.abs(this.lane) > 0.3) {
+    // (conta dove l'auto è davvero, se è più lontana dalla traiettoria di quanto voluto: es. finita
+    // larga in frenata)
+    // (tolleranza di 1 m: i piccoli scostamenti di guida non contano)
+    const dev = d - lineD - this.lane;
+    const off = this.lane + (Math.abs(dev) > 1 ? dev - Math.sign(dev) : 0);
+    if (Math.abs(off) > 0.3) {
       const brakeAcc = 11; // m/s², prudente (vale per GT e monoposto)
       const look = Math.round(Math.max(40, speed * 1.6) / step);
       for (let j = 0; j <= look; j += 2) {
         const kj = line.curvature[(idx + j) % n];
         if (Math.abs(kj) < 1 / 400) continue;
         const R = 1 / Math.abs(kj);
-        const inside = this.lane * Math.sign(kj); // + = verso l'interno della curva
+        const inside = off * Math.sign(kj); // + = verso l'interno della curva
         const f = inside > 0 ? Math.sqrt(Math.max(0.3, (R - inside) / R)) : 1 - 0.03 * Math.min(1, -inside / 3);
         if (f >= 1) continue;
         const vj = this.target(idx + j) * f;
@@ -403,7 +443,7 @@ export class BotDriver {
       }
     }
     // in sorpasso si stacca un filo più tardi (e si rischia di più)
-    if (this.mode === 'sorpasso') vt *= 1 + 0.02 * this.skill.aggression;
+    if (this.mode === 'sorpasso' && !brakingZone) vt *= 1 + 0.02 * this.skill.aggression;
     if (this.flags.yellow) vt *= 0.93;
     if (this.flags.blue) vt *= 0.95;
     if (wantAvoid !== null) vt = Math.min(vt, 22);
@@ -427,12 +467,14 @@ export class BotDriver {
     if (this.errType === 'lungo') vt *= 1.09; // ha frenato tardi: entra troppo forte
 
     const err = vt - v.speed;
+    // come un pilota vero: gas a fondo finché si è sotto la velocità obiettivo (il gas parziale
+    // tiene chiuse le ali attive e toglie la spinta elettrica), freno deciso quando si è sopra
     if (err > 0) {
-      out.throttle = clamp(err * 0.6 + 0.15, 0, 1);
+      out.throttle = clamp(err * 1.5 + 0.45, 0, 1);
       out.brake = 0;
     } else {
-      out.throttle = err > -0.8 ? clamp(0.3 + err * 0.3, 0, 1) : 0;
-      out.brake = err < -0.8 ? clamp(-err * 0.35, 0, 1) : 0;
+      out.throttle = err > -0.6 ? clamp(0.35 + err * 0.5, 0, 1) : 0;
+      out.brake = err < -0.6 ? clamp(-err * 0.6, 0, 1) : 0;
     }
     if (this.errType === 'bloccaggio') {
       // pestone sul freno senza ABS: le ruote si bloccano, l'auto non curva
@@ -454,15 +496,33 @@ export class BotDriver {
     }
     // il posteriore parte: via dal freno e gas dolce per ritrovare aderenza (come un pilota)
     if (sliding) {
-      out.brake = Math.min(out.brake, 0.1);
+      // in frenata per una curva però il freno non si molla (si arriverebbe lunghi, a muro):
+      // si alleggerisce e l'ABS tiene le ruote al limite; mollarlo del tutto solo se gira davvero
+      out.brake = Math.min(out.brake, braking && Math.abs(beta) < 9 * RAD ? 0.55 : 0.1);
       out.throttle = Math.min(out.throttle, 0.25);
     }
 
     // gas progressivo, come un pilota: niente "on/off" (nelle marce basse, con tanta coppia,
     // un colpo di gas in curva fa partire il posteriore)
-    const rise = (v.drivetrain.gear <= 2 ? 1.6 : 3.5) * dt;
+    const rise = (v.drivetrain.gear <= 2 ? 2.5 : 4) * dt;
     out.throttle = Math.min(out.throttle, this.lastThrottle + rise);
+    // dosaggio del gas in trazione (come un pilota, non a scatti come il controllo di trazione):
+    // si cerca lo slittamento delle ruote posteriori che dà la massima spinta, poco sotto il picco
+    const rearSlip = Math.max(v.tires[2].kappa, v.tires[3].kappa) / v.car.tire.peakSlipRatio;
+    if (rearSlip > 0.8 && v.speed > 3) this.tractionLimit -= Math.min(1, rearSlip - 0.8) * 30 * dt;
+    else this.tractionLimit += 1.2 * dt;
+    this.tractionLimit = clamp(this.tractionLimit, 0.15, 1);
+    out.throttle = Math.min(out.throttle, this.tractionLimit);
     this.lastThrottle = out.throttle;
+    // spinta elettrica solo dove serve davvero: non in prima/seconda né quando le ruote
+    // posteriori già slittano (l'energia andrebbe in fumo), così la batteria dura per i rettilinei
+    v.hybrid.deployScale = v.drivetrain.gear >= 3 && this.tractionLimit > 0.97 ? 1 : 0;
+    // ad alta velocità la spinta elettrica rende poco (e oltre ~290 km/h il regolamento la
+    // riduce): lì si ricarica col motore termico ("super clipping") per spingere dopo, in uscita
+    // dalle curve, dove ogni kJ fa guadagnare molto di più
+    if (v.hybrid.hasErs && !v.hybrid.overtakeActive) {
+      v.hybrid.mode = v.speed * 3.6 > this.clipKmh && v.hybrid.charge < 0.95 ? 'ricarica' : 'bilanciata';
+    }
 
     this.stuckTime = v.speed < 1.5 ? this.stuckTime + dt : 0;
     return out;

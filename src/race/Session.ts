@@ -12,6 +12,7 @@
  *   finita    → risultati
  */
 import type { Difficulty } from '../ai/BotDriver';
+import type { WeatherMode } from './Weather';
 import { LapTiming, type TimingEvent } from './LapTiming';
 
 export type SessionType = 'libere' | 'qualifica' | 'gara';
@@ -31,6 +32,8 @@ export interface SessionConfig {
   /** Moltiplicatori di usura gomme e consumo carburante (1 = realistico): per gare brevi con strategia */
   wearMultiplier: number;
   fuelMultiplier: number;
+  /** Meteo: asciutto, variabile (la pioggia può arrivare), pioggia */
+  weather?: WeatherMode;
 }
 
 export type GridMode = 'qualifica' | 'pole' | 'meta' | 'fondo';

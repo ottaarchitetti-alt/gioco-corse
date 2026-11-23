@@ -31,6 +31,12 @@ import { clamp, RAD } from '../core/math';
 import type { Compound, TireParams } from './CarParams';
 import { ATM_BAR } from './constants';
 
+/** Aderenza di una mescola con la pista bagnata `w` (0..1): moltiplicatore */
+export function wetGripFactor(c: Compound, w: number): number {
+  const g = c.wetGrip ?? [1, 0.6, 0.42]; // slick: crolla sul bagnato
+  return w < 0.5 ? g[0] + (g[1] - g[0]) * (w / 0.5) : g[1] + (g[2] - g[1]) * ((w - 0.5) / 0.5);
+}
+
 /** Curva normalizzata forza/slip: 0 a s=0, 1 al picco (s=1), poi scende verso slideFactor. */
 export function tireCurve(s: number, slideFactor: number, falloff: number): number {
   if (s <= 1) return 1.5 * s - 0.5 * s * s * s; // cubica: tangente orizzontale al picco
@@ -75,6 +81,8 @@ export interface TireEnvironment {
   wearMultiplier: number;
   /** Moltiplicatore del consumo di carburante */
   fuelMultiplier: number;
+  /** Pista bagnata (0 = asciutta, 1 = fradicia): meteo */
+  wetness?: number;
 }
 
 export class Tire {
@@ -175,7 +183,8 @@ export class Tire {
 
       // 4) Aderenza disponibile (sensibilità al carico)
       const loadRatio = fz / p.nominalLoad;
-      const mu = p.mu * Math.max(0.5, 1 - p.loadSensitivity * (loadRatio - 1)) * surfaceGrip * this.gripFactor;
+      const mu = p.mu * Math.max(0.5, 1 - p.loadSensitivity * (loadRatio - 1)) * surfaceGrip * this.gripFactor
+        * wetGripFactor(this.compound, env.wetness ?? 0);
       const fMax = mu * fz;
 
       if (s > 1e-6) {
@@ -210,7 +219,9 @@ export class Tire {
 
     const heatSlip = this.slipPower * th.slipHeatFraction * this.compound.heatMul * pressureHeat;
     const heatRoll = this.params.rollingResistance * this.load * speed * 1.5 * pressureHeat;
-    const toAir = (th.airCoolBase + th.airCoolSpeed * speed) * (this.surfaceTemp - env.airTemp);
+    // l'acqua raffredda molto la gomma (le slick sul bagnato non vanno in temperatura)
+    const wet = env.wetness ?? 0;
+    const toAir = (th.airCoolBase + th.airCoolSpeed * speed) * (this.surfaceTemp - env.airTemp) * (1 + 2.5 * wet);
     const toTrack = th.trackConduct * loadRatio * (this.surfaceTemp - env.trackTemp);
     const toCore = th.surfaceToCore * (this.surfaceTemp - this.coreTemp);
     const coreLoss = th.coreToAir * (this.coreTemp - env.airTemp);
@@ -220,7 +231,8 @@ export class Tire {
 
     // Usura: energia di strisciamento, più rapida se la gomma è surriscaldata
     const over = Math.max(0, this.surfaceTemp - this.compound.optimalTemp - 15);
-    const tempWear = 1 + over / 20;
+    // gomme da pioggia sull'asciutto: il battistrada morbido si sbriciola
+    const tempWear = (1 + over / 20) * (this.compound.wet ? 1 + 3 * (1 - wet) * (1 - wet) : 1);
     this.tread = Math.max(
       0,
       this.tread - ((this.slipPower * th.wearPerMJ * this.compound.wearMul * tempWear * env.wearMultiplier) / 1e6) * dt,

@@ -23,7 +23,9 @@ import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
 import { Minimap } from '../ui/Minimap';
+import { RainFx } from '../render/RainFx';
 import { BoxRadio, type RadioIntent, type RadioPrio } from './BoxRadio';
+import { Weather, WEATHER_NAMES, idealTyreClass, tyreClassOf, wetGripFactor, type WeatherMode } from '../race/Weather';
 import {
   CareerStore, PLAYER_ID, applyCarLevels, botSkillOf, failureChance, playerDriver, playerTeam, raceLaps,
   racingDrivers, recordRace, teamOf, teamStandings, driverStandings, ordinal, type Career,
@@ -189,6 +191,11 @@ export class Game {
   private contactCooldown = 0;
   /** Ultimo urto che ha fatto danni, per coppia di auto (tempo fbClock) */
   private hitCooldown = new Map<string, number>();
+  /** Meteo della sessione */
+  private weather = new Weather('asciutto', 600);
+  private weatherTimer = 0;
+  /** Pioggia, cielo coperto, asfalto bagnato, spruzzi */
+  private rainFx!: RainFx;
   /** Contatti tra auto (velocità d'urto > 2 m/s) dall'avvio: per statistiche e test */
   contactCount = 0;
 
@@ -282,7 +289,10 @@ export class Game {
 
     // ---- Pista e traiettoria ideale (per i bot) ----
     this.track = new TrackSpline(trackData);
-    this.renderer.scene.add(buildTrackMesh(this.track, this.renderer.maxAnisotropy));
+    const trackMesh = buildTrackMesh(this.track, this.renderer.maxAnisotropy);
+    this.renderer.scene.add(trackMesh);
+    this.rainFx = new RainFx(this.renderer.scene, this.renderer.sun, this.renderer.hemi, this.renderer.renderer, this.renderer.sky);
+    this.rainFx.registerWet(trackMesh);
     this.line = new RacingLine(this.track);
     // zone di aerodinamica attiva (monoposto 2026): rettilinei lunghi
     this.aeroZones = activeAeroZones(this.track, car);
@@ -391,6 +401,10 @@ export class Game {
     this.sessionCfg = { ...cfg };
     if (!this.career) saveJSON('session', this.sessionCfg);
     this.session = new Session(this.sessionCfg, this.track.length, (e) => this.onSessionEvent(e));
+    // durata stimata della sessione (per distribuire gli scrosci)
+    const dur = cfg.type === 'gara' ? cfg.laps * (this.track.length / 50) : cfg.minutes > 0 ? cfg.minutes * 60 : 1500;
+    this.weather = new Weather(cfg.weather ?? 'asciutto', dur);
+    this.rainFx?.clearSpray();
 
     // ---- Auto: il pilota + i bot di questa sessione ----
     for (const e of this.entities) if (!e.isPlayer) this.renderer.scene.remove(e.view.rig.root);
@@ -687,8 +701,9 @@ export class Game {
       e.vehicle.fuelUsed = 0;
       e.fuelAtLine = 0;
       e.fuelPerLap = null;
-      e.treadAtLine = Math.min(...e.vehicle.tires.map((t) => t.tread));
       e.vehicle.damage.reset();
+      this.fitWeatherTyres(e, true);
+      e.treadAtLine = Math.min(...e.vehicle.tires.map((t) => t.tread));
       e.treadPerLap = null;
       e.vehicle.speedLimiter = 0;
       const cap = e.vehicle.car.fuelCapacity;
@@ -772,6 +787,14 @@ export class Game {
     const s = this.session;
     const lapsLeft = s.isRace ? s.config.laps - e.competitor.lapsDone : 99;
     if (!e.isPlayer) {
+      // gomme sbagliate per il meteo: si rientra subito (anche in prova)
+      if (this.track.pit && !e.pit && !e.pitRequest && lapsLeft > 0) {
+        const want = this.weatherCompound(e.vehicle);
+        if (want) {
+          e.pitRequest = { changeTyres: true, compound: want, addFuel: 0, repair: e.vehicle.damage.frontWing > 0.2 };
+          return;
+        }
+      }
       if (!s.isRace || !this.track.pit || e.pit || e.pitRequest || lapsLeft <= 0) return;
       const perLap = this.fuelPerLapOf(e);
       const tread = Math.min(...e.vehicle.tires.map((t) => t.tread));
@@ -780,16 +803,16 @@ export class Game {
       const lowFuel = canRefuel && e.vehicle.fuel < (lapsLeft + 0.25) * perLap;
       const wornOut = tread < 0.28 && lapsLeft > 2;
       // regola delle due mescole: almeno una sosta, entro il 60% della gara
-      const ruleStop = this.compoundRuleActive() && e.compoundsUsed.size < 2 && lapsLeft >= 1
+      const ruleStop = this.compoundRuleActive() && !this.ruleOk(e) && lapsLeft >= 1
         && (lapsLeft <= Math.max(1, Math.round(s.config.laps * 0.4)) || tread < 0.45);
       if (lowFuel || wornOut || ruleStop) {
         const cur = e.vehicle.tires[0].compound.name;
         const comps = e.vehicle.car.tire.compounds;
         // una mescola diversa da quella montata: la più dura se mancano tanti giri
-        const other = Object.keys(comps).filter((id) => comps[id].name !== cur);
-        const pick = e.compoundsUsed.size < 2 && other.length
+        const other = Object.keys(comps).filter((id) => comps[id].name !== cur && !comps[id].wet);
+        const pick = this.weatherCompound(e.vehicle) ?? (!this.ruleOk(e) && other.length
           ? (lapsLeft > s.config.laps * 0.5 ? other[other.length - 1] : other[0])
-          : e.vehicle.car.setup.compound;
+          : this.compoundIdOf(e.vehicle));
         e.pitRequest = {
           changeTyres: tread < 0.6 || ruleStop,
           compound: pick,
@@ -806,11 +829,80 @@ export class Game {
     return !!this.car.rules?.twoCompounds && this.session.isRace && this.session.config.laps >= 5 && !!this.track.pit;
   }
 
+  /** Regola delle mescole rispettata: due mescole diverse, oppure gomme da pioggia usate */
+  private ruleOk(e: CarEntity): boolean {
+    const comps = Object.values(e.vehicle.car.tire.compounds);
+    return e.compoundsUsed.size >= 2 || [...e.compoundsUsed].some((n) => comps.find((c) => c.name === n)?.wet);
+  }
+
+  /** id della mescola montata */
+  private compoundIdOf(v: Vehicle): string {
+    const comps = v.car.tire.compounds;
+    return Object.keys(comps).find((k) => comps[k].name === v.tires[0].compound.name) ?? v.car.setup.compound;
+  }
+
+  /**
+   * Gomme giuste per il meteo: id della mescola da montare, oppure null se quelle montate vanno
+   * bene. Slick → la mescola dell'assetto (o media).
+   */
+  private weatherCompound(v: Vehicle): string | null {
+    const comps = v.car.tire.compounds;
+    const cur = tyreClassOf(v.tires[0].compound);
+    const want = idealTyreClass(this.weather.wetness, cur);
+    if (want === cur) return null;
+    if (want === 'slick') return comps[v.car.setup.compound]?.wet ? (Object.keys(comps).find((k) => !comps[k].wet) ?? null) : v.car.setup.compound;
+    return Object.keys(comps).find((k) => tyreClassOf(comps[k]) === want) ?? null;
+  }
+
+  /** Inizio sessione: se la pista è bagnata si parte con le gomme da pioggia */
+  private fitWeatherTyres(e: CarEntity, quiet: boolean): void {
+    const want = this.weatherCompound(e.vehicle);
+    if (!want || tyreClassOf(e.vehicle.car.tire.compounds[want]) === 'slick') return;
+    const v = e.vehicle, s = v.car.setup;
+    v.fitTyres(want, s.pressureFront, s.pressureRear, this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3);
+    e.compoundsUsed = new Set([v.tires[0].compound.name]);
+    if (e.isPlayer) {
+      this.pitPlan.compound = want;
+      if (!quiet) this.radio(`Pista bagnata: montiamo le <b>${v.tires[0].compound.name}</b>.`, 6, 'importante');
+    }
+  }
+
+  /** I box dei bot guardano il meteo ogni secondo: gomme sbagliate → rientro subito */
+  private botWeatherCalls(): void {
+    if (!this.track.pit) return;
+    for (const e of this.entities) {
+      if (e.isPlayer || e.pit || e.parked || e.competitor.retired || e.competitor.finished) continue;
+      const want = this.weatherCompound(e.vehicle);
+      if (!want) continue;
+      if (e.pitRequest) {
+        // sosta già chiesta (benzina, ala...): si cambiano anche le gomme
+        e.pitRequest.changeTyres = true;
+        e.pitRequest.compound = want;
+      } else e.pitRequest = { changeTyres: true, compound: want, addFuel: 0, repair: e.vehicle.damage.frontWing > 0.2 };
+    }
+  }
+
+  /** Avvisi meteo del box (una volta al secondo): pioggia in arrivo, gomme da cambiare */
+  private weatherRadio(): void {
+    if (!this.started || this.session.state === 'finita') return;
+    const f = this.weather.forecast(240);
+    if (f?.kind === 'inizia' && !this.radioSaid.has(`rain${Math.round(this.weather.time / 300)}`) && f.inS < 200) {
+      this.radioSaid.add(`rain${Math.round(this.weather.time / 300)}`);
+      this.radio(`<b>Pioggia in arrivo</b> tra circa ${f.inS < 60 ? `${f.inS} secondi` : `${Math.round(f.inS / 60)} minuti`}: ${Weather.rainWord(f.peak)}.`, 7, 'importante');
+    }
+    const call = this.weatherCompoundCall();
+    const key = `call${call ? this.weatherCompound(this.vehicle) : ''}`;
+    if (call && !this.radioSaid.has(key) && !this.playerEntity.pit) {
+      this.radioSaid.add(key);
+      this.radio(call, 9, 'importante');
+    }
+  }
+
   /** All'arrivo: chi non ha usato due mescole viene squalificato. */
   private checkCompoundRule(e: CarEntity): void {
     if (!e.competitor.finished || e.ruleChecked) return;
     e.ruleChecked = true;
-    if (this.compoundRuleActive() && e.compoundsUsed.size < 2) {
+    if (this.compoundRuleActive() && !this.ruleOk(e)) {
       e.competitor.dsq = 'una sola mescola';
       if (e.isPlayer) this.radio('<b>Squalificato: in gara bisogna usare almeno due mescole diverse.</b>', 8);
     }
@@ -870,7 +962,7 @@ export class Game {
           this.pitPlan.addFuel = Math.max(this.pitPlan.addFuel, Math.ceil(need));
         }
       }
-      if (this.compoundRuleActive() && e.compoundsUsed.size < 2 && lapsLeft > 0) {
+      if (this.compoundRuleActive() && !this.ruleOk(e) && lapsLeft > 0) {
         msgs.push('Regola: devi ancora montare una seconda mescola (pit stop; piano in pausa → 🛞 Strategia box).');
       }
       if (v.hybrid.overtakeAvailable) msgs.push('<b>Overtake mode disponibile: premi O</b>');
@@ -1002,7 +1094,7 @@ export class Game {
     const tread = Math.min(...v.tires.map((t) => t.tread));
     const life = e.treadPerLap ? (tread - 0.22) / e.treadPerLap : Infinity;
     const fuelLaps = v.fuel / this.fuelPerLapOf(e);
-    const needRule = this.compoundRuleActive() && e.compoundsUsed.size < 2;
+    const needRule = this.compoundRuleActive() && !this.ruleOk(e);
     const comps = this.car.tire.compounds;
     const ids = Object.keys(comps).filter((id) => !comps[id].wet);
     const pickFor = (laps: number) => (laps > 12 ? ids[ids.length - 1] : laps > 6 ? ids[Math.floor(ids.length / 2)] : ids[0]);
@@ -1017,14 +1109,36 @@ export class Game {
     return `${reasons.join(', ')}: <b>sosta ${when <= 1 ? 'questo giro o il prossimo' : `tra ${when} giri`}</b>, gomme ${comps[c].name}. Dimmi "box" quando vuoi.`;
   }
 
+  /** Meteo per l'HUD (null = asciutto, niente in vista) */
+  private weatherHud(): { rain: number; wetness: number; forecast: string } | null {
+    const w = this.weather;
+    const f = w.forecast(900);
+    if (w.mode === 'asciutto' && w.rain < 0.01 && w.wetness < 0.01 && !f) return null;
+    const mins = (s: number) => (s < 60 ? `${Math.round(s / 15) * 15} s` : `${Math.round(s / 60)} min`);
+    const forecast = !f ? '' : f.kind === 'inizia' ? `Pioggia tra ~${mins(f.inS)}` : `Smette tra ~${mins(f.inS)}`;
+    return { rain: w.rain, wetness: w.wetness, forecast: `${WEATHER_NAMES[w.mode]}${forecast ? ' · ' + forecast : ''}` };
+  }
+
   /** Previsioni del tempo per la radio. */
   private weatherReport(): string {
-    return 'Asciutto, niente pioggia in vista.';
+    const w = this.weather;
+    let t = `Adesso ${Weather.rainWord(w.rain)}, pista ${Weather.wetWord(w.wetness)}`;
+    const f = w.forecast(900);
+    if (!f) t += w.rain > 0.05 ? ', e non smette a breve.' : ', niente pioggia in vista per un quarto d\'ora.';
+    else if (f.kind === 'inizia') t += `. <b>Pioggia tra circa ${Math.max(1, Math.round(f.inS / 60))} minuti</b> (${Weather.rainWord(f.peak)}).`;
+    else t += `. Dovrebbe smettere tra circa ${Math.max(1, Math.round(f.inS / 60))} minuti.`;
+    return t + (this.weatherCompoundCall() ? ' ' + this.weatherCompoundCall() : '');
   }
 
   /** Consiglio sulle gomme se quelle montate non vanno bene per il meteo (null = tutto ok). */
   private weatherCompoundCall(): string | null {
-    return null;
+    const want = this.weatherCompound(this.vehicle);
+    if (!want || !this.track.pit) return null;
+    const c = this.car.tire.compounds[want];
+    const why = tyreClassOf(c) === 'slick' ? 'la pista si è asciugata' : tyreClassOf(c) === 'bagnato' ? "c'è troppa acqua" : 'la pista è bagnata';
+    this.pitPlan.compound = want;
+    this.pitPlan.changeTyres = true;
+    return `<b>${why[0].toUpperCase() + why.slice(1)}: box per le ${c.name}?</b> Dimmi "box" e te le prepariamo.`;
   }
 
   /** Stato dei danni per la radio. */
@@ -1088,7 +1202,10 @@ export class Game {
 
   /** Velocità dei bot: più piano con l'auto danneggiata */
   private botPace(e: CarEntity): number {
-    return e.vehicle.damage.paceFactor();
+    const f = wetGripFactor(e.vehicle.tires[0].compound, this.weather.wetness);
+    // con le gomme sbagliate (slick sul bagnato) si va con molta più prudenza: l'auto scivola
+    const wet = Math.sqrt(f) * (f < 0.75 ? 0.9 : 1);
+    return e.vehicle.damage.paceFactor() * wet;
   }
 
 
@@ -1221,6 +1338,23 @@ export class Game {
     if (this.replayPlayer) return; // durante il replay la simulazione è ferma
     const finished = this.session.state === 'finita';
     const hold = this.session.state === 'semaforo';
+
+    // ---- meteo: pioggia e pista bagnata → gomme di tutte le auto ----
+    this.weather.update(dt, this.sim.trackTemp);
+    {
+      const w = this.weather.wetness, r = this.weather.rain;
+      for (const e of this.entities) {
+        e.vehicle.env.wetness = w;
+        e.vehicle.env.trackTemp = this.sim.trackTemp - 14 * w;
+        e.vehicle.env.airTemp = this.sim.airTemp - 4 * r;
+      }
+    }
+    this.weatherTimer -= dt;
+    if (this.weatherTimer <= 0) {
+      this.weatherTimer = 1;
+      this.weatherRadio();
+      this.botWeatherCalls();
+    }
 
     // ---- 0) chi vede cosa: traffico e scia ----
     const L = this.track.length;
@@ -1486,6 +1620,7 @@ export class Game {
         },
       })),
       session: snapshot(this.session),
+      weather: snapshot(this.weather),
       ghost: snapshot(this.ghostRec),
       replay: snapshot(this.replayRec),
       contacts: this.contactCount,
@@ -1519,6 +1654,7 @@ export class Game {
       });
     }
     restore(this.session, st.session);
+    restore(this.weather, st.weather);
     restore(this.ghostRec, st.ghost);
     restore(this.replayRec, st.replay);
     this.contactCount = st.contacts;
@@ -1633,6 +1769,7 @@ export class Game {
     const html = `
       <p><b>${round.trackName}</b> · gara ${c.round + 1} di ${c.calendar.length} · stagione ${c.season}</p>
       <p>${team.name} · ${playerDriver(c).name} #${playerDriver(c).number} · obiettivo ${ordinal(c.objective)} tra i costruttori</p>
+      <p>Meteo previsto: <b>${WEATHER_NAMES[this.careerWeather()]}</b></p>
       <ul class="weekend">
         ${c.practiceMinutes > 0 ? step('libere', `Prove libere (${c.practiceMinutes} min)`) : ''}
         ${step('qualifica', `Qualifica (${c.qualiMinutes} min)`)}
@@ -1677,7 +1814,20 @@ export class Game {
       grid: this.lastQualiOrder ? 'qualifica' : 'fondo',
       wearMultiplier: 1,
       fuelMultiplier: 1,
+      weather: this.careerWeather(),
     });
+  }
+
+  /**
+   * Meteo del weekend di carriera: deciso dalla stagione e dalla gara (uguale per tutte le
+   * sessioni del weekend): 70% asciutto, 20% variabile, 10% pioggia.
+   */
+  private careerWeather(): WeatherMode {
+    const c = this.career!;
+    let h = (c.season * 7919 + c.round * 104729 + c.id.length * 31) % 1000;
+    h = (h * 2654435761) % 1000;
+    const x = h / 1000;
+    return x < 0.7 ? 'asciutto' : x < 0.9 ? 'variabile' : 'pioggia';
   }
 
   /** Risultati di una sessione del weekend; dopo la gara si salva il risultato nella carriera. */
@@ -1925,6 +2075,9 @@ export class Game {
       if (!e.parked) e.view.update(alpha);
     }
     this.cameras.update(frameDt, v.speed);
+    this.rainFx.update(frameDt, this.renderer.camera, this.weather.rain, this.weather.wetness, this.entities.map((e) => ({
+      key: e, x: e.vehicle.x, z: e.vehicle.z, yaw: e.vehicle.yaw, speed: e.vehicle.speed, visible: !e.parked,
+    })));
     this.renderer.followShadows(this.playerEntity.view.position);
 
     if (this.resultsTimer > 0) {
@@ -1980,6 +2133,7 @@ export class Game {
         temp: ty.surfaceTemp, core: ty.coreTemp, pressure: ty.pressure,
         tread: ty.tread, grip: ty.gripFactor, optimal: ty.compound.optimalTemp, puncture: v.damage.puncture[i],
       })),
+      weather: this.weatherHud(),
       damage: v.damage.any ? {
         frontWing: v.damage.frontWing, rearWing: v.damage.rearWing, floor: v.damage.floor,
         suspension: v.damage.suspension, engine: v.damage.engine,

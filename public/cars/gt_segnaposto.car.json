@@ -53,7 +53,9 @@
     "compounds": {
       "morbida": { "name": "Morbida", "muMul": 1.035, "optimalTemp": 82, "wearMul": 1.7, "heatMul": 1.15 },
       "media": { "name": "Media", "muMul": 1.0, "optimalTemp": 90, "wearMul": 1.0, "heatMul": 1.0 },
-      "dura": { "name": "Dura", "muMul": 0.97, "optimalTemp": 98, "wearMul": 0.6, "heatMul": 0.88 }
+      "dura": { "name": "Dura", "muMul": 0.97, "optimalTemp": 98, "wearMul": 0.6, "heatMul": 0.88 },
+      "intermedia": { "name": "Intermedia", "muMul": 1.0, "optimalTemp": 65, "wearMul": 1.3, "heatMul": 1.3, "wet": true, "wetGrip": [0.86, 0.8, 0.64] },
+      "bagnato": { "name": "Bagnato", "muMul": 1.0, "optimalTemp": 55, "wearMul": 1.5, "heatMul": 1.4, "wet": true, "wetGrip": [0.78, 0.76, 0.72] }
     }
   },
 

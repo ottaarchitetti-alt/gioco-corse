@@ -110,7 +110,7 @@ export class Vehicle {
   downforceFactor = 1;
 
   /** Condizioni ambientali (aria, asfalto, moltiplicatore usura): le imposta Game. */
-  env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1, fuelMultiplier: 1 };
+  env: TireEnvironment = { airTemp: 22, trackTemp: 30, wearMultiplier: 1, fuelMultiplier: 1, wetness: 0 };
 
   /** Carburante a bordo (kg): ogni auto ha il suo (il peso cala mentre consuma) */
   fuel: number;

@@ -72,6 +72,8 @@ export interface HudData {
   ers: { charge: number; powerKW: number; mode: string; overtake: 'no' | 'disponibile' | 'attivo'; aeroOpen: number; aeroZone: boolean } | null;
   /** Una voce per gomma: ant. sx, ant. dx, post. sx, post. dx */
   tyres: { temp: number; core: number; pressure: number; tread: number; grip: number; optimal: number; puncture?: boolean }[];
+  /** Meteo: pioggia e pista bagnata (0..1), previsione a parole (null = asciutto e stabile) */
+  weather: { rain: number; wetness: number; forecast: string } | null;
   /** Danni (null = auto intatta) */
   damage: { frontWing: number; rearWing: number; floor: number; suspension: number; engine: number } | null;
 }
@@ -109,6 +111,7 @@ export class Hud {
   private flag: HTMLDivElement;
   private pitEl: HTMLDivElement;
   private damageEl: HTMLDivElement;
+  private weatherEl: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     this.laps = h('hud-panel hud-laps');
@@ -132,8 +135,9 @@ export class Hud {
     this.flag = h('hud-panel hud-flag');
     this.pitEl = h('hud-panel hud-pit');
     this.damageEl = h('hud-panel hud-damage');
+    this.weatherEl = h('hud-panel hud-weather');
     this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div><div class="fuel mono"></div>`);
-    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.pitEl, this.damageEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.pitEl, this.damageEl, this.weatherEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -251,6 +255,18 @@ export class Hud {
         + row('Fondo', dm.floor) + row('Sospens.', dm.suspension) + row('Motore', dm.engine);
       this.damageEl.style.display = 'block';
     } else this.damageEl.style.display = 'none';
+
+    if (d.weather) {
+      const w = d.weather;
+      const icon = w.rain > 0.65 ? '⛈' : w.rain > 0.05 ? '🌧' : w.wetness > 0.08 ? '🌥' : '⛅';
+      const bar = (v: number, c: string) => `<span class="wb"><i style="width:${Math.round(v * 100)}%;background:${c}"></i></span>`;
+      const html = `<div class="wt">${icon} Meteo</div>`
+        + `<div class="wr">Pioggia ${bar(w.rain, '#5aa9ff')}<b>${Math.round(w.rain * 100)}%</b></div>`
+        + `<div class="wr">Pista ${bar(w.wetness, '#2a63d4')}<b>${Math.round(w.wetness * 100)}%</b></div>`
+        + (w.forecast ? `<div class="wf">${w.forecast}</div>` : '');
+      if (this.weatherEl.innerHTML !== html) this.weatherEl.innerHTML = html;
+      this.weatherEl.style.display = 'block';
+    } else this.weatherEl.style.display = 'none';
 
     this.info.innerHTML =`${d.trackName} · ${d.carName}<br>Telecamera: ${d.camera} (C) · Input: ${d.device}<br>H = aiuto · P = pausa`;
   }

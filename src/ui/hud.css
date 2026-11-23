@@ -248,3 +248,12 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .hud-damage .dr b { text-align: right; font-variant-numeric: tabular-nums; }
 .hud-tyres .tyre.punct { border-color: #ff4d4d !important; background: rgba(255, 77, 77, 0.35) !important; animation: blink 0.6s infinite alternate; }
 @keyframes blink { to { opacity: 0.5; } }
+
+/* ===== Meteo ===== */
+.hud-weather { bottom: 150px; left: 16px; min-width: 190px; font-size: 12px; padding: 7px 10px; display: none; border-left: 3px solid #5aa9ff; }
+.hud-weather .wt { font-weight: 700; color: #8cc4ff; margin-bottom: 3px; }
+.hud-weather .wr { display: grid; grid-template-columns: 44px 1fr 34px; align-items: center; gap: 6px; margin: 2px 0; }
+.hud-weather .wb { display: block; height: 6px; background: #2a2f37; border-radius: 3px; overflow: hidden; }
+.hud-weather .wb i { display: block; height: 100%; }
+.hud-weather .wr b { text-align: right; font-variant-numeric: tabular-nums; }
+.hud-weather .wf { margin-top: 3px; color: var(--hud-dim); }

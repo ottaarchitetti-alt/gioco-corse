@@ -17,6 +17,7 @@ export class Renderer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly sun: THREE.DirectionalLight;
+  readonly hemi: THREE.HemisphereLight;
   /** Direzione da cui arriva il sole (versore). */
   private sunDir = new THREE.Vector3();
   /** Stile pixel art: catena di effetti (null = stile realistico) */
@@ -24,7 +25,7 @@ export class Renderer {
   private pixelPass: PixelArtPass | null = null;
   private palettePass: ShaderPass | null = null;
   private pixelSize = 3;
-  private sky: THREE.Object3D;
+  readonly sky: THREE.Object3D;
   private pixelSky: THREE.Texture | null = null;
   /** ogni tanto si convertono i materiali nuovi (auto aggiunte, fantasma...) */
   private stylizeTimer = 0;
@@ -63,7 +64,8 @@ export class Renderer {
     this.scene.environmentIntensity = 0.35;
 
     // ---- Luci ----
-    this.scene.add(new THREE.HemisphereLight('#cfe3ff', '#4a5a3a', 0.6));
+    this.hemi = new THREE.HemisphereLight('#cfe3ff', '#4a5a3a', 0.6);
+    this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight('#fff3e0', 2.6);
     this.sun.castShadow = qp.shadows;
     this.sun.shadow.mapSize.set(qp.shadowMap, qp.shadowMap);

@@ -4,6 +4,7 @@
 import { DIFFICULTIES, type Difficulty } from '../ai/BotDriver';
 import { GRID_NAMES, JUMP_START_PENALTY, SESSION_NAMES, type GridMode, type SessionConfig, type SessionType } from '../race/Session';
 import { navigate } from './router';
+import { WEATHER_NAMES, type WeatherMode } from '../race/Weather';
 
 const CONTROLS = `
 <table>
@@ -15,6 +16,8 @@ const CONTROLS = `
   <tr><td>C</td><td>Cambia telecamera (esterna, cofano, abitacolo)</td></tr>
   <tr><td>R</td><td>Rimetti l'auto in pista</td></tr>
   <tr><td>Backspace</td><td>Flashback (anche in gara, con tutte le auto): torna indietro di 3 s per rifare la curva (giro non valido e penalità presi dopo vengono cancellati); premi ancora per altri 3 s, acceleratore per ripartire</td></tr>
+  <tr><td>B</td><td>Radio del box: domande e ordini (numeri 1–9; volante R2, ▲▼ batteria per scegliere)</td></tr>
+  <tr><td>V</td><td>Parla al box col microfono ("box questo giro", "come vanno le gomme?"; volante L2)</td></tr>
   <tr><td>O</td><td>Monoposto: Overtake mode (se al traguardo eri entro 1 s da chi ti precede)</td></tr>
   <tr><td>K / J</td><td>Monoposto: batteria su / giù (ricarica → bilanciata → attacco)</td></tr>
   <tr><td>L</td><td>Elenco dei giri della sessione (tempi e settori)</td></tr>
@@ -97,6 +100,9 @@ export class Overlay {
         <div class="form">${opts}</div>
         <h2>Avversari</h2>
         <div class="form">${rivals}</div>
+        <h2>Meteo</h2>
+        <div class="segs">${(Object.keys(WEATHER_NAMES) as WeatherMode[]).map((w) => `<button class="seg ${(cfg.weather ?? 'asciutto') === w ? 'on' : ''}" data-wx="${w}">${WEATHER_NAMES[w]}</button>`).join('')}</div>
+        <p class="small">Variabile: la pioggia può arrivare durante la sessione (il box ti avvisa). Con la pista bagnata servono gomme intermedie o da bagnato.</p>
         <h2>Strategia</h2>
         <div class="form">
           <label>Usura gomme × <input type="number" min="0" max="10" step="0.5" value="${cfg.wearMultiplier}" data-m="wearMultiplier"></label>
@@ -105,6 +111,12 @@ export class Overlay {
         </div>
         <div class="actions"><button data-go>Entra in pista</button><button class="secondary" data-setup>🔧 Assetto</button><button class="secondary" data-cal>🎮 Calibra volante</button><button class="secondary" data-menu>◀ Menu</button></div>
         <h2>Comandi</h2>${CONTROLS}`;
+      this.card.querySelectorAll<HTMLButtonElement>('[data-wx]').forEach((b) =>
+        b.addEventListener('click', () => {
+          cfg.weather = b.dataset.wx as WeatherMode;
+          render();
+        }),
+      );
       this.card.querySelectorAll<HTMLButtonElement>('[data-type]').forEach((b) =>
         b.addEventListener('click', () => {
           cfg.type = b.dataset.type as SessionType;

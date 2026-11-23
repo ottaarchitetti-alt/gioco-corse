@@ -54,7 +54,9 @@
     "compounds": {
       "morbida": { "name": "Morbida", "muMul": 1.04, "optimalTemp": 98, "wearMul": 1.8, "heatMul": 1.15, "color": "#e8202a" },
       "media": { "name": "Media", "muMul": 1.0, "optimalTemp": 104, "wearMul": 1.0, "heatMul": 1.0, "color": "#f6d21e" },
-      "dura": { "name": "Dura", "muMul": 0.965, "optimalTemp": 110, "wearMul": 0.6, "heatMul": 0.88, "color": "#f2f2f2" }
+      "dura": { "name": "Dura", "muMul": 0.965, "optimalTemp": 110, "wearMul": 0.6, "heatMul": 0.88, "color": "#f2f2f2" },
+      "intermedia": { "name": "Intermedia", "muMul": 1.0, "optimalTemp": 75, "wearMul": 1.3, "heatMul": 1.3, "color": "#2fb34a", "wet": true, "wetGrip": [0.86, 0.8, 0.64] },
+      "bagnato": { "name": "Bagnato", "muMul": 1.0, "optimalTemp": 62, "wearMul": 1.5, "heatMul": 1.4, "color": "#2a63d4", "wet": true, "wetGrip": [0.78, 0.76, 0.72] }
     }
   },
 

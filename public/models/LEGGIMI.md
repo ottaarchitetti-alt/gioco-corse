@@ -12,6 +12,13 @@ Auto incluse e nome del modello da creare:
 | GT | `public/cars/gt_segnaposto.car.json` | `public/models/gt_car.glb` |
 | Monoposto 2026 | `public/cars/monoposto_2026.car.json` | `public/models/monoposto.glb` |
 
+**Monoposto già pronta.** `public/models/monoposto.glb` è generata dallo script
+`tools/blender/monoposto_f1.py` (design originale, misure della fisica). In Blender:
+*Scripting → Text → Open* lo script, poi *Run Script*: ricrea la collezione `Monoposto_F1`,
+salva `tools/blender/monoposto.blend` ed esporta di nuovo il GLB. Puoi cambiare le misure
+all'inizio dello script (passo, carreggiate, raggio) oppure modificare a mano il `.blend`
+ed esportarlo come spiegato sotto.
+
 ## 1. Impostazioni della scena
 - *Scene Properties → Units*: **Metric**, *Unit Scale* **1.0**, lunghezza in metri.
 - Modella in scala reale: una GT è lunga circa 4,5–4,7 m, larga circa 2 m; la monoposto 2026

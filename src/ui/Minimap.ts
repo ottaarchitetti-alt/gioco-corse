@@ -48,7 +48,8 @@ export class Minimap {
     this.h = Math.round(spanZ * this.scale + 2 * PAD);
     this.ox = minX;
     this.oz = minZ;
-    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    // in pixel art la mappa si disegna a metà risoluzione e si ingrandisce a blocchi
+    this.dpr = document.body.classList.contains('pixel-style') ? 0.5 : Math.min(2, window.devicePixelRatio || 1);
 
     this.el = document.createElement('div');
     this.el.className = 'hud-panel hud-minimap';

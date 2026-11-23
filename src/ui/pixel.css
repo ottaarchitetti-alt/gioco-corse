@@ -1,0 +1,60 @@
+/* =====================================================================
+   STILE PIXEL ART per HUD, menu e finestre (attivo con body.pixel-style)
+   Font pixel (Pixelify Sans, licenza OFL, incluso nel progetto), angoli vivi,
+   bordi a "gradino" come nei giochi 8/16 bit, niente sfocature.
+   ===================================================================== */
+body.pixel-style {
+  --hud-bg: rgba(14, 16, 28, 0.86);
+  --px-edge: #05060a;
+  --px-light: #3a4160;
+  --px-dark: #1a1d2c;
+  font-family: 'Pixelify Sans', 'Segoe UI', sans-serif;
+}
+body.pixel-style #ui,
+body.pixel-style .overlay,
+body.pixel-style .menu-page,
+body.pixel-style .editor { font-family: 'Pixelify Sans', 'Segoe UI', sans-serif; }
+body.pixel-style .mono { font-family: 'Pixelify Sans', 'Consolas', monospace; letter-spacing: 0.02em; }
+
+/* pannelli: angoli vivi, bordo scuro e cornice interna chiara/scura (effetto rilievo) */
+body.pixel-style .hud-panel,
+body.pixel-style .overlay .card,
+body.pixel-style .track-row {
+  border-radius: 0 !important;
+  backdrop-filter: none;
+  border: 3px solid var(--px-edge);
+  box-shadow: inset 2px 2px 0 var(--px-light), inset -2px -2px 0 var(--px-dark), 4px 4px 0 rgba(0, 0, 0, 0.45);
+}
+body.pixel-style .overlay .card { background: #171a2a; }
+body.pixel-style .track-row { background: #171a2a; }
+
+/* tutto squadrato: pulsanti, barre, settori, gomme, campi */
+body.pixel-style .hud-panel *,
+body.pixel-style .overlay *,
+body.pixel-style .menu-page *,
+body.pixel-style .editor * { border-radius: 0 !important; }
+
+body.pixel-style button,
+body.pixel-style .overlay button,
+body.pixel-style .menu-page button {
+  font-family: 'Pixelify Sans', 'Segoe UI', sans-serif;
+  border: 2px solid var(--px-edge);
+  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.35), inset 2px 2px 0 rgba(255, 255, 255, 0.25), 3px 3px 0 rgba(0, 0, 0, 0.5);
+}
+body.pixel-style button:active { transform: translate(2px, 2px); box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.35); }
+
+/* semafori quadrati, luci del cambio a blocchi */
+body.pixel-style .hud-lights span { border-radius: 0; border-width: 3px; }
+body.pixel-style .hud-dash .gear { font-size: 56px; font-weight: 700; text-shadow: 3px 3px 0 #000; }
+body.pixel-style .hud-dash .speed { text-shadow: 3px 3px 0 #000; }
+body.pixel-style .hud-msg { text-shadow: 2px 2px 0 #000; }
+
+/* batteria a "tacche" come le barre dell'energia dei vecchi giochi */
+body.pixel-style .hud-dash .ers .bat i {
+  background: repeating-linear-gradient(90deg, #3ddc84 0 10px, #1f9d6b 10px 12px);
+}
+
+/* immagini e canvas dell'interfaccia (minimappa) senza sfumature */
+body.pixel-style canvas { image-rendering: pixelated; }
+body.pixel-style .menu-page { background: #0d0f1a; }
+body.pixel-style .menu-card h1 { text-shadow: 3px 3px 0 #000; letter-spacing: 0.03em; }

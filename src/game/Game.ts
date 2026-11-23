@@ -42,7 +42,7 @@ import { navigate } from '../ui/router';
 import { TelemetryGraph } from '../ui/TelemetryGraph';
 import { loadSettings, openSettings, type GameSettings } from '../ui/Settings';
 import { PitController, serviceTime, type PitPlan } from '../strategy/PitController';
-import { activeAeroZones, ERS_MODE_NAMES, ERS_MODES } from '../physics/Hybrid';
+import { activeAeroZones, ERS_MODE_NAMES } from '../physics/Hybrid';
 import { applySetup, loadSetup, saveSetup, type SetupValues } from '../strategy/Setup';
 import type { PitStall } from '../track/TrackSpline';
 
@@ -1130,11 +1130,25 @@ export class Game {
           else this.hud.message('Overtake mode non disponibile: devi passare sul traguardo entro 1 s da chi ti precede', 2.5);
           break;
         }
-        case 'ersMode': {
+        case 'ersMode':
+        case 'ersUp':
+        case 'ersDown': {
           const h = this.vehicle.hybrid;
           if (!h.hasErs) break;
-          h.mode = ERS_MODES[(ERS_MODES.indexOf(h.mode) + 1) % ERS_MODES.length];
-          this.hud.message(`🔋 Batteria: modalità ${ERS_MODE_NAMES[h.mode]}`, 1.5);
+          // dal più "risparmio" al più "spinta": ricarica → bilanciata → attacco
+          const order: typeof h.mode[] = ['ricarica', 'bilanciata', 'attacco'];
+          const i = order.indexOf(h.mode);
+          let j = i;
+          if (a === 'ersUp') j = Math.min(order.length - 1, i + 1);
+          else if (a === 'ersDown') j = Math.max(0, i - 1);
+          else j = (i + 1) % order.length; // tasto unico (gamepad B): giro completo
+          if (j === i) {
+            this.hud.message(`🔋 Batteria già su ${ERS_MODE_NAMES[h.mode]}`, 1.2);
+            break;
+          }
+          h.mode = order[j];
+          const bar = order.map((_, k) => (k <= j ? '▮' : '▯')).join('');
+          this.hud.message(`🔋 Batteria ${j > i ? '▲' : '▼'} ${ERS_MODE_NAMES[h.mode]} ${bar}`, 1.5);
           break;
         }
       }
@@ -1299,6 +1313,7 @@ export class Game {
   private applySettings(): void {
     const s = this.settings;
     this.renderer.applyQuality(s.quality);
+    this.renderer.applyStyle(s);
     this.sound.setVolume(s.volume);
     if (s.showFps && !this.fpsEl) {
       this.fpsEl = document.createElement('div');

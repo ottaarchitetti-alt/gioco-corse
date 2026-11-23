@@ -7,9 +7,15 @@
 import './ui/hud.css';
 import './ui/menu.css';
 import './editor/editor.css';
+import '@fontsource/pixelify-sans/400.css';
+import '@fontsource/pixelify-sans/700.css';
+import './ui/pixel.css';
+import { loadSettings } from './ui/Settings';
 import { currentRoute, installRouter, navigate } from './ui/router';
 
 const app = document.getElementById('app')!;
+// stile grafico scelto nelle impostazioni (pixel art o realistico): vale anche per i menu
+document.body.classList.toggle('pixel-style', loadSettings().style === 'pixel');
 const ui = document.getElementById('ui')!;
 
 function showError(err: unknown): void {

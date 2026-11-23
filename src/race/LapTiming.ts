@@ -54,6 +54,8 @@ export class LapTiming {
   sessionTime = 0;
   /** Tempo di sessione al passaggio di ogni 10 m di distanza totale */
   private checkpoints: number[] = [0];
+  /** distanza del primo tempo di passaggio (negativa in griglia, dietro il traguardo) */
+  private cpBase = 0;
 
   /** In gara la griglia è dietro il traguardo: il primo passaggio non chiude un giro */
   ignoreNextCrossing = false;
@@ -103,8 +105,8 @@ export class LapTiming {
 
   /** Tempo di sessione in cui il concorrente aveva percorso la distanza d (per i distacchi). */
   timeAtDistance(d: number): number | null {
-    if (d < 0) return 0;
-    const k = d / TRACE_STEP;
+    const k = (d - this.cpBase) / TRACE_STEP;
+    if (k < 0) return 0;
     const i = Math.floor(k);
     if (i + 1 >= this.checkpoints.length) return null;
     const f = k - i;
@@ -137,7 +139,10 @@ export class LapTiming {
       // parte più indietro non risulta "avanti" (prima tutti partivano da 0)
       this.prevS = s;
       this.totalDistance = s > this.length / 2 ? s - this.length : s;
-      this.checkpoints = this.totalDistance < 0 ? [] : [0];
+      // i tempi di passaggio partono dal posto in griglia (anche prima del traguardo), così i
+      // distacchi del primo giro sono giusti per tutti
+      this.cpBase = Math.floor(this.totalDistance / TRACE_STEP) * TRACE_STEP;
+      this.checkpoints = [];
       return;
     }
     const L = this.length;
@@ -158,7 +163,7 @@ export class LapTiming {
     // distanza totale e tempi di passaggio (solo in avanti: indietro non si "guadagna")
     this.totalDistance += ds;
     this.lapDistance += ds;
-    while ((this.checkpoints.length) * TRACE_STEP <= this.totalDistance) {
+    while (this.cpBase + this.checkpoints.length * TRACE_STEP <= this.totalDistance) {
       this.checkpoints.push(this.sessionTime);
     }
 

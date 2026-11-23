@@ -39,19 +39,27 @@ alcune curve sono più strette del vero e i tempi sul giro sono più alti di que
 - **Effetto suolo**: il carico cresce abbassando l'auto; se il fondo tocca terra lo perde.
   Altezza da terra regolabile nell'assetto
 - **Ibrido (ERS)**: batteria da 4 MJ; recupero in frenata e in rilascio, "super clipping" a
-  fine rettilineo; spinta elettrica che cala sopra i 290 km/h. Modalità batteria (tasto **K**):
-  bilanciata, attacco, ricarica
+  fine rettilineo; spinta elettrica che cala sopra i 290 km/h. Modalità batteria: **K** su, **J** giù
+  (ricarica → bilanciata → attacco)
 - **Overtake mode** (tasto **O**): se al traguardo eri entro 1 s da chi ti precede, nel giro
   dopo hai spinta piena fino a 337 km/h e 0,5 MJ in più
 - Regole: niente rifornimento (la benzina deve bastare), pit stop ~4 s, obbligo di usare
   due mescole in gara (da 5 giri in su), altrimenti squalifica
 - Bot: traiettoria e velocità con deportanza, zone di aerodinamica attiva e spinta elettrica;
   usano subito l'Overtake mode; più prudenti al via e quando sono affiancati
-- Volante G29: tasto X = Overtake, cerchio = modalità batteria. Per la monoposto imposta in
+- Volante G29: tasto X = Overtake, cerchio / triangolo = batteria su / giù (si possono
+  cambiare in "Calibra volante"); gamepad: croce su/giù. Per la monoposto imposta in
   G HUB **360°** di rotazione (la GT usa 540°)
 
 Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
 punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
+
+**Grafica in pixel art (predefinita).** La scena 3D viene disegnata come un'illustrazione in
+pixel art: risoluzione ridotta con pixel netti, contorni scuri sulle sagome e linee sugli
+spigoli, luce "a bande" (4 toni), palette ridotta con retinatura, cielo disegnato a fasce con
+nuvole a pixel; HUD e menu con font pixel (Pixelify Sans, licenza OFL) e bordi squadrati.
+In Impostazioni: stile **Pixel art / Realistico** e grandezza dei pixel (fine, medio, grosso).
+Codice in `src/render/PixelArt.ts` e `src/ui/pixel.css`.
 
 **Fine gara.** Quando tagli il traguardo non devi aspettare gli altri: rientri ai box e
 l'arrivo degli avversari viene simulato in pochi secondi, poi compaiono i risultati.

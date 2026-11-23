@@ -91,7 +91,7 @@ export class MainMenu {
           return downloadTrack(await TrackStore.load(id!));
         case 'impostazioni': {
           const { loadSettings, openSettings } = await import('./Settings');
-          return openSettings(loadSettings(), () => {});
+          return openSettings(loadSettings(), (s) => document.body.classList.toggle('pixel-style', s.style === 'pixel'));
         }
         case 'importa': {
           const t = await pickTrackFile();

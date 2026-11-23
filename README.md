@@ -54,6 +54,27 @@ alcune curve sono più strette del vero e i tempi sul giro sono più alti di que
 Correzione importante per tutte le auto: la traiettoria ideale dei bot usava troppo pochi
 punti sulle piste lunghe; ora sfrutta tutta la larghezza della pista (bot più veloci).
 
+### Modalità carriera
+Dal menu principale → **🏆 Carriera**. Sei un pilota di una scuderia e ne gestisci lo sviluppo,
+stagione dopo stagione.
+- **Nuova carriera**: nome, il tuo nome e numero, auto (monoposto o GT), durata delle gare
+  (5 giri, 25%, 50%, 100% di ~305 km), difficoltà, scuderia di partenza e calendario
+  (anche con le piste create nell'editor).
+- **10 scuderie e 20 piloti** (nomi inventati). Ogni scuderia ha un'auto diversa: motore
+  (potenza), aerodinamica (carico ed efficienza), telaio (aderenza), affidabilità (guasti).
+  Ogni pilota ha abilità e aggressività. Si modificano tutti nelle schede **Scuderie** e
+  **Piloti** (nomi, colori, livelli, scuderia); il **Calendario** si cambia nella sua scheda.
+- **Weekend**: prove libere → qualifica → gara (prove e qualifica si possono saltare; senza
+  qualifica parti ultimo). Punti come in F1, classifiche piloti e costruttori. In gara possono
+  esserci guasti in base all'affidabilità. "Simula la gara" se un weekend non vuoi guidarlo.
+- **Gestione**: dopo ogni gara premi (in base ai punti) e sponsor (in base al prestigio);
+  nella scheda **Sviluppo** si spendono per migliorare l'auto (+1..+5 a pacchetto). Anche le
+  altre scuderie si sviluppano.
+- **Obiettivo**: una posizione nel campionato costruttori. A fine stagione, in base a
+  obiettivo e reputazione, arrivano offerte da altre scuderie (o non ti rinnovano); scegli e
+  inizia la stagione successiva (le auto si riavvicinano un po', come con un nuovo regolamento).
+- Le carriere sono salvate in questo browser. Codice in `src/career/`.
+
 **Grafica in pixel art (facoltativa).** La scena 3D viene disegnata come un'illustrazione in
 pixel art: risoluzione ridotta con pixel netti, contorni scuri sulle sagome e linee sugli
 spigoli, luce "a bande" (4 toni), palette ridotta con retinatura, cielo disegnato a fasce con

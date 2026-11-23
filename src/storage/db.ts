@@ -7,8 +7,8 @@
  */
 
 const DB_NAME = 'simulatore-corsa';
-const DB_VERSION = 2; // 2: aggiunto 'records'
-export const STORES = ['tracks', 'backgrounds', 'records'] as const;
+const DB_VERSION = 3; // 2: aggiunto 'records'; 3: aggiunto 'careers' (modalità carriera)
+export const STORES = ['tracks', 'backgrounds', 'records', 'careers'] as const;
 export type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;

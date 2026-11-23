@@ -23,6 +23,10 @@ import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
 import { Minimap } from '../ui/Minimap';
+import {
+  CareerStore, PLAYER_ID, applyCarLevels, botSkillOf, failureChance, playerDriver, playerTeam, raceLaps,
+  racingDrivers, recordRace, teamOf, teamStandings, driverStandings, ordinal, type Career,
+} from '../career/CareerData';
 import { FlashbackBuffer, restore, snapshot } from './Flashback';
 import type { LapRecord, TimingEvent } from '../race/LapTiming';
 import { Competitor, Session, SESSION_NAMES, type SessionConfig, type SessionEvent } from '../race/Session';
@@ -122,6 +126,19 @@ export class Game {
   private prefs = loadJSON('prefs', { ghost: true });
   private graph!: TelemetryGraph;
   private minimap!: Minimap;
+  /** MODALITÀ CARRIERA: dati della carriera (null = guida libera) */
+  private career: Career | null = null;
+  /** fase del weekend di carriera */
+  private careerStage: 'libere' | 'qualifica' | 'gara' | 'fatto' = 'libere';
+  private careerSaved = false;
+  /** auto di base (senza livelli della scuderia né assetto): da qui si fanno le auto delle scuderie */
+  private rawCar!: CarParams;
+  /** ordine di partenza della gara (id) */
+  private raceGrid: string[] = [];
+  /** guasti in arrivo: distanza (m) a cui l'auto si rompe */
+  private failAt = new Map<CarEntity, number>();
+  /** auto rotte da portare ai box dopo qualche secondo */
+  private toPark = new Map<CarEntity, number>();
   /** Il pilota ha finito la gara: dopo un attimo si simula velocemente l'arrivo degli altri */
   private finishSim: { delay: number; started: boolean } | null = null;
   /** Flashback: fotografie degli ultimi secondi e stato della scelta (null = non attivo) */
@@ -193,7 +210,7 @@ export class Game {
   private cars: CarEntry[] = [];
   private carId: string;
 
-  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false, carId: string | null = null) {
+  constructor(private appEl: HTMLElement, private uiEl: HTMLElement, private trackId: string, private fromEditor = false, carId: string | null = null, private careerId: string | null = null) {
     this.sessionCfg = { ...DEFAULT_SESSION, ...this.sessionCfg };
     this.carId = carId ?? loadJSON('car', DEFAULT_CAR);
   }
@@ -212,6 +229,12 @@ export class Game {
 
     // ---- Dati ----
     this.cars = await listCars();
+    if (this.careerId) {
+      this.career = (await CareerStore.load(this.careerId)) ?? null;
+      if (!this.career) throw new Error('Carriera non trovata (è stata eliminata?).');
+      this.carId = this.career.carClass;
+      this.careerStage = this.career.practiceMinutes > 0 ? 'libere' : 'qualifica';
+    }
     const entry = this.cars.find((c) => c.id === this.carId) ?? this.cars[0];
     this.carId = entry.id;
     saveJSON('car', this.carId);
@@ -223,12 +246,17 @@ export class Game {
     this.sound.maxRpm = this.opponentSound.maxRpm = car.maxRpm;
 
     // ---- Modello auto (GLB o segnaposto) ----
-    const rig = await loadCarRig(car, '#d8231f');
+    const rig = this.career
+      ? await loadCarRig(car, playerTeam(this.career).color, playerDriver(this.career).number)
+      : await loadCarRig(car, '#d8231f');
     if (car.geometryFromModel && rig.source === 'glb' && rig.measured) {
       // Passo, carreggiate e raggio ruota letti dal tuo modello Blender
       Object.assign(car, rig.measured);
       console.info('[Game] Geometria letta dal modello:', rig.measured);
     }
+    this.rawCar = structuredClone(car);
+    // carriera: la tua auto ha i livelli (motore, aerodinamica, telaio) della tua scuderia
+    if (this.career) applyCarLevels(car, playerTeam(this.career).car);
     this.baseCar = structuredClone(car);
     this.botCar = structuredClone(car);
     // assetto salvato per questa pista (solo per la tua auto)
@@ -258,7 +286,7 @@ export class Game {
     this.bestSectorsEver = this.record ? [...this.record.bestSectors] : [];
 
     // ---- Auto del pilota ----
-    this.playerEntity = this.createEntity('pilota', 'Tu', true, car, rig);
+    this.playerEntity = this.createEntity('pilota', this.career ? playerDriver(this.career).name : 'Tu', true, car, rig);
     this.renderer.scene.add(rig.root);
 
     // ---- HUD e pannelli ----
@@ -289,7 +317,8 @@ export class Game {
     this.startSession(this.sessionCfg, false);
     this.loop.paused = true;
     this.loop.start();
-    this.showSessionChoice();
+    if (this.career) this.showCareerWeekend();
+    else this.showSessionChoice();
   }
 
   /** Crea un'auto (fisica + grafica). Il cronometraggio viene creato a ogni sessione. */
@@ -340,16 +369,18 @@ export class Game {
   /** Prepara e avvia una sessione. */
   startSession(cfg: SessionConfig, run = true): void {
     this.sessionCfg = { ...cfg };
-    saveJSON('session', this.sessionCfg);
+    if (!this.career) saveJSON('session', this.sessionCfg);
     this.session = new Session(this.sessionCfg, this.track.length, (e) => this.onSessionEvent(e));
 
     // ---- Auto: il pilota + i bot di questa sessione ----
     for (const e of this.entities) if (!e.isPlayer) this.renderer.scene.remove(e.view.rig.root);
     this.entities = [this.playerEntity];
-    const roster = makeRoster(cfg.opponents, cfg.difficulty as Difficulty);
+    const roster = this.career
+      ? this.careerRoster()
+      : makeRoster(cfg.opponents, cfg.difficulty as Difficulty).map((b) => ({ ...b, number: parseInt(b.id.replace('bot_', '')) + 2, car: this.botCar }));
     for (const b of roster) {
-      const rig = cloneRig(this.playerRig, b.color, parseInt(b.id.replace('bot_', '')) + 2);
-      const e = this.createEntity(b.id, b.name, false, this.botCar, rig);
+      const rig = cloneRig(this.playerRig, b.color, b.number);
+      const e = this.createEntity(b.id, b.name, false, b.car, rig);
       e.bot = new BotDriver(this.line, e.vehicle, b.skill);
       e.color = String(b.color);
       this.renderer.scene.add(rig.root);
@@ -370,6 +401,9 @@ export class Game {
     this.flashback.clear();
     this.fb = null;
     this.finishSim = null;
+    this.failAt.clear();
+    this.toPark.clear();
+    this.careerSaved = false;
     this.placeForSession();
 
     this.hud?.showLapList(null);
@@ -407,6 +441,7 @@ export class Game {
         const mid = Math.floor(bySkill.length / 2);
         order = [...bySkill.slice(0, mid), this.playerEntity, ...bySkill.slice(mid)];
       }
+      this.raceGrid = order.map((e) => e.id);
       order.forEach((e, k) => {
         // se i posti in griglia non bastano, le auto in più si mettono più indietro
         if (k < this.track.grid.length) {
@@ -435,6 +470,7 @@ export class Game {
     switch (e.type) {
       case 'go':
         this.hud.message('VIA!', 1.5);
+        if (this.career && this.session.isRace) this.planFailures();
         break;
       case 'jumpStart':
         if (e.c.isPlayer) this.hud.message('Partenza anticipata: +5 s di penalità', 4);
@@ -556,6 +592,7 @@ export class Game {
       <p>${this.track.data.name} · ${this.car.name}</p>
       <h2>Classifica</h2><table class="results">${head}${rows}</table>
       <h2>I tuoi giri</h2>${this.lapTableHtml(true)}`;
+    if (this.career) return this.showCareerResults(html);
     const actions: { label: string; act: () => void; primary?: boolean }[] = [];
     if (s.config.type === 'qualifica') {
       actions.push({ label: '▶ Vai in gara', primary: true, act: () => this.startSession({ ...this.sessionCfg, type: 'gara', grid: 'qualifica' }) });
@@ -1013,6 +1050,18 @@ export class Game {
       e.vehicle.hybrid.inAeroZone = this.aeroZones[p.index] === 1 && !e.pit;
       const allOff = e.vehicle.surfaces.every((s) => s.name === 'erba');
       if (!e.competitor.finished) e.competitor.timing.update(dt, p.s, allOff);
+      const fa = this.failAt.get(e);
+      if (fa !== undefined && !e.competitor.retired && !e.competitor.finished && e.competitor.timing.totalDistance > fa) this.mechanicalFailure(e);
+      const park = this.toPark.get(e);
+      if (park !== undefined) {
+        // l'auto rotta rallenta; ferma (o dopo qualche secondo) la si porta ai box, fuori dai piedi
+        const left = park - dt;
+        if (left <= 0 || e.vehicle.speed < 2) {
+          this.toPark.delete(e);
+          if (!this.placeInPits(e)) e.vehicle.reset(1e5 + Math.random() * 1e3, 1e5, 0);
+          e.competitor.timing.resetPosition();
+        } else this.toPark.set(e, left);
+      }
       if (e.isPlayer) {
         if (Math.abs(p.d) > 120) this.resetToTrack(e); // rete di sicurezza
       } else if (e.competitor.retired) {
@@ -1252,16 +1301,188 @@ export class Game {
       if (!show) return;
       this.overlay.showPause(() => this.togglePause(), [
         { label: '↻ Ricomincia sessione', act: () => this.startSession(this.sessionCfg) },
-        { label: '🏁 Termina e vedi risultati', act: () => this.endSessionEarly() },
-        { label: 'Cambia sessione…', act: () => this.showSessionChoice() },
+        this.career && this.session.isRace
+          ? { label: '🏳 Ritirati (il resto della gara viene simulato)', act: () => this.retirePlayer() }
+          : { label: '🏁 Termina e vedi risultati', act: () => this.endSessionEarly() },
+        this.career
+          ? { label: '📋 Weekend…', act: () => this.showCareerWeekend() }
+          : { label: 'Cambia sessione…', act: () => this.showSessionChoice() },
         { label: '🔧 Assetto', act: () => void this.openSetup() },
         { label: '🛞 Strategia box', act: () => this.openPitPlan() },
         { label: '🎮 Calibra volante', act: () => void this.openWheelCalibration() },
         { label: '⚙ Impostazioni', act: () => openSettings(this.settings, () => this.applySettings()) },
         ...(this.fromEditor ? [{ label: "✎ Torna all'editor", act: () => navigate('editor', { pista: this.trackId }) }] : []),
-        { label: 'Menu principale', act: () => navigate('menu') },
+        this.career
+          ? { label: '🏆 Torna alla carriera (il weekend non viene salvato)', act: () => navigate('carriera', { id: this.career!.id }) }
+          : { label: 'Menu principale', act: () => navigate('menu') },
       ]);
     }
+  }
+
+  // =====================================================================
+  //  MODALITÀ CARRIERA: weekend (prove, qualifica, gara)
+  // =====================================================================
+
+  /** Avversari della carriera: i piloti delle scuderie, ognuno con l'auto della sua scuderia. */
+  private careerRoster() {
+    const c = this.career!;
+    const cars = new Map<string, CarParams>();
+    return racingDrivers(c).filter((d) => d.id !== PLAYER_ID).slice(0, 19).map((d) => {
+      const t = teamOf(c, d.teamId);
+      if (!cars.has(t.id)) {
+        const car = structuredClone(this.rawCar);
+        applyCarLevels(car, t.car);
+        cars.set(t.id, car);
+      }
+      return { id: d.id, name: d.name, color: t.color, number: d.number, skill: botSkillOf(c, d), car: cars.get(t.id)! };
+    });
+  }
+
+  /** Menu del weekend: le sessioni da fare, in ordine. */
+  private showCareerWeekend(): void {
+    const c = this.career!;
+    this.loop.paused = true;
+    if (this.started) { this.sound.setPaused(true); this.opponentSound.setPaused(true); }
+    const round = c.calendar[c.round];
+    if (!round || round.trackId !== this.trackId || c.offers) {
+      this.overlay.showResults('Carriera', '<p>Questo weekend non è più in programma.</p>', [
+        { label: '🏆 Torna alla carriera', primary: true, act: () => navigate('carriera', { id: c.id }) },
+      ]);
+      return;
+    }
+    const team = playerTeam(c);
+    const laps = raceLaps(c, round);
+    const st = this.careerStage;
+    const step = (k: typeof st, label: string) => {
+      const order = ['libere', 'qualifica', 'gara', 'fatto'];
+      const done = order.indexOf(st) > order.indexOf(k);
+      return `<li class="${k === st ? 'cur' : done ? 'done' : ''}">${done ? '✔' : k === st ? '▶' : '·'} ${label}</li>`;
+    };
+    const html = `
+      <p><b>${round.trackName}</b> · gara ${c.round + 1} di ${c.calendar.length} · stagione ${c.season}</p>
+      <p>${team.name} · ${playerDriver(c).name} #${playerDriver(c).number} · obiettivo ${ordinal(c.objective)} tra i costruttori</p>
+      <ul class="weekend">
+        ${c.practiceMinutes > 0 ? step('libere', `Prove libere (${c.practiceMinutes} min)`) : ''}
+        ${step('qualifica', `Qualifica (${c.qualiMinutes} min)`)}
+        ${step('gara', `Gara (${laps} giri)`)}
+      </ul>
+      <p class="small">Rischio guasto in gara: ${(failureChance(team.car) * 100).toFixed(0)}%. Puoi saltare prove e qualifica (senza qualifica parti ultimo).</p>`;
+    const actions: { label: string; act: () => void; primary?: boolean }[] = [];
+    if (st === 'libere') {
+      actions.push({ label: `▶ Prove libere`, primary: true, act: () => this.beginCareerSession('libere') });
+      actions.push({ label: 'Salta le prove', act: () => { this.careerStage = 'qualifica'; this.showCareerWeekend(); } });
+    } else if (st === 'qualifica') {
+      actions.push({ label: `▶ Qualifica`, primary: true, act: () => this.beginCareerSession('qualifica') });
+      actions.push({ label: 'Salta (parti ultimo)', act: () => { this.lastQualiOrder = null; this.careerStage = 'gara'; this.showCareerWeekend(); } });
+    } else if (st === 'gara') {
+      actions.push({ label: `▶ Gara (${laps} giri)`, primary: true, act: () => this.beginCareerSession('gara') });
+    }
+    actions.push(
+      { label: '🔧 Assetto', act: () => void this.openSetup() },
+      { label: '🎮 Calibra volante', act: () => void this.openWheelCalibration() },
+      { label: '🏆 Torna alla carriera', act: () => navigate('carriera', { id: c.id }) },
+    );
+    this.overlay.showResults('Weekend di gara', html, actions);
+  }
+
+  private beginCareerSession(type: 'libere' | 'qualifica' | 'gara'): void {
+    const c = this.career!;
+    if (!this.started) {
+      this.started = true;
+      this.sound.start();
+      this.opponentSound.start();
+      this.applySettings();
+    }
+    this.sound.setPaused(false);
+    this.opponentSound.setPaused(false);
+    this.startSession({
+      ...this.sessionCfg,
+      type,
+      minutes: type === 'libere' ? c.practiceMinutes : type === 'qualifica' ? c.qualiMinutes : 0,
+      laps: raceLaps(c, c.calendar[c.round]),
+      opponents: Math.min(19, racingDrivers(c).length - 1),
+      difficulty: c.difficulty,
+      grid: this.lastQualiOrder ? 'qualifica' : 'fondo',
+      wearMultiplier: 1,
+      fuelMultiplier: 1,
+    });
+  }
+
+  /** Risultati di una sessione del weekend; dopo la gara si salva il risultato nella carriera. */
+  private showCareerResults(html: string): void {
+    const c = this.career!;
+    const type = this.session.config.type;
+    const actions: { label: string; act: () => void; primary?: boolean }[] = [];
+    if (type === 'libere') {
+      this.careerStage = 'qualifica';
+      actions.push({ label: '▶ Avanti: qualifica', primary: true, act: () => this.showCareerWeekend() });
+      actions.push({ label: '↻ Ripeti le prove', act: () => this.startSession(this.sessionCfg) });
+    } else if (type === 'qualifica') {
+      this.careerStage = 'gara';
+      actions.push({ label: '▶ Avanti: gara', primary: true, act: () => this.showCareerWeekend() });
+      actions.push({ label: '↻ Ripeti la qualifica', act: () => this.startSession(this.sessionCfg) });
+    } else {
+      this.careerStage = 'fatto';
+      if (!this.careerSaved) {
+        this.careerSaved = true;
+        this.saveCareerRace();
+      }
+      const me = c.results[c.results.length - 1]?.rows.find((x) => x.driverId === PLAYER_ID);
+      const dPos = driverStandings(c).findIndex((x) => x.id === PLAYER_ID) + 1;
+      const tPos = teamStandings(c).findIndex((x) => x.id === playerTeam(c).id) + 1;
+      html = `<p class="career-race">${me ? `<b>${me.points} punti</b> · ` : ''}campionato: ${ordinal(dPos)} tra i piloti, ${playerTeam(c).name} ${ordinal(tPos)} tra i costruttori (obiettivo ${ordinal(c.objective)}) · cassa ${playerTeam(c).budget.toFixed(1)} M</p>` + html;
+      actions.push({ label: '🏆 Torna alla carriera', primary: true, act: () => navigate('carriera', { id: c.id }) });
+      if (this.replayRec.frames.length > 20) actions.push({ label: '🎬 Replay', act: () => this.startReplay() });
+    }
+    actions.push({ label: '🏆 Esci dal weekend', act: () => navigate('carriera', { id: c.id }) });
+    this.overlay.showResults(`${SESSION_NAMES[type]} · Risultati`, html, type === 'gara' ? actions.slice(0, -1) : actions);
+  }
+
+  /** Ordine d'arrivo della gara → punti, soldi e sviluppo nella carriera (salvata subito). */
+  private saveCareerRace(): void {
+    const c = this.career!;
+    const st = this.session.standings();
+    const leader = st[0];
+    const rows = st.map((comp) => ({
+      driverId: comp.id === 'pilota' ? PLAYER_ID : comp.id,
+      status: comp.dsq ? 'squalificato' as const : comp.retired ? 'ritirato' as const : 'arrivato' as const,
+      lapsDown: Math.max(0, (leader?.finishLaps ?? leader?.lapsDone ?? 0) - (comp.finished ? comp.finishLaps : comp.lapsDone)),
+    }));
+    recordRace(c, rows, this.raceGrid.map((id) => (id === 'pilota' ? PLAYER_ID : id)), false);
+    CareerStore.save(c).catch((e) => this.hud.message(`Errore nel salvataggio della carriera: ${e}`, 5));
+  }
+
+  /** Guasti della gara: per ogni auto, in base all'affidabilità della sua scuderia. */
+  private planFailures(): void {
+    const c = this.career!;
+    const dist = this.sessionCfg.laps * this.track.length;
+    for (const e of this.entities) {
+      const d = e.isPlayer ? playerDriver(c) : c.drivers.find((x) => x.id === e.id);
+      if (!d) continue;
+      if (Math.random() < failureChance(teamOf(c, d.teamId).car)) this.failAt.set(e, dist * (0.08 + Math.random() * 0.85));
+    }
+  }
+
+  private mechanicalFailure(e: CarEntity): void {
+    this.failAt.delete(e);
+    e.competitor.retired = true;
+    e.vehicle.fuel = 0; // il motore si spegne: l'auto rallenta fino a fermarsi
+    const what = ['al motore', 'al cambio', 'idraulico', 'elettrico', 'ai freni'][Math.floor(Math.random() * 5)];
+    if (e.isPlayer) {
+      this.hud.message(`💥 Guasto ${what}: sei fuori dalla gara`, 5);
+      this.finishSim = { delay: 4, started: false };
+    } else {
+      this.radio(`${e.name}: guasto ${what}, ritirato.`, 4);
+      this.toPark.set(e, 6);
+    }
+  }
+
+  /** Ritiro volontario in gara (carriera): il resto viene simulato. */
+  private retirePlayer(): void {
+    this.overlay.hide();
+    this.player.retired = true;
+    this.finishSim = { delay: 0, started: false };
+    this.loop.paused = false;
   }
 
   /**

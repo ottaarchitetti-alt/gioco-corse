@@ -206,3 +206,10 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 /* ---- Minimappa ---- */
 .hud-minimap { top: 90px; right: 16px; padding: 6px; line-height: 0; }
 .hud-minimap canvas { display: block; }
+
+/* ---- Carriera: weekend ---- */
+.overlay ul.weekend { list-style: none; padding: 0; margin: 10px 0; font-size: 16px; }
+.overlay ul.weekend li { padding: 4px 0; color: var(--hud-dim); }
+.overlay ul.weekend li.cur { color: var(--accent); font-weight: 700; }
+.overlay ul.weekend li.done { color: var(--good); }
+.overlay .career-race { font-size: 15px; background: rgba(255, 204, 0, 0.1); border-left: 3px solid var(--accent); padding: 6px 10px; }

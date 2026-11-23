@@ -54,6 +54,7 @@ export class MainMenu {
         <h1>Simulatore di corsa</h1>
         <p class="sub">Prove libere · scegli una pista o creane una nuova</p>
         <div class="menu-toolbar">
+          <button class="primary" data-act="carriera">🏆 Carriera</button>
           <button class="primary" data-act="nuova">+ Nuova pista</button>
           <button data-act="importa">Importa pista (.json)</button>
           <button data-act="impostazioni">⚙ Impostazioni</button>
@@ -73,6 +74,8 @@ export class MainMenu {
       switch (act) {
         case 'guida':
           return navigate('guida', { pista: id! });
+        case 'carriera':
+          return navigate('carriera');
         case 'modifica':
           return navigate('editor', { pista: id! });
         case 'nuova': {

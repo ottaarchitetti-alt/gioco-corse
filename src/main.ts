@@ -3,6 +3,8 @@
  *   #/menu                    menu principale (default)
  *   #/guida?pista=ID          guida sulla pista ID
  *   #/editor?pista=ID         editor della pista ID
+ *   #/carriera[?id=ID]        modalità carriera (elenco o carriera ID)
+ *   #/guida?pista=ID&carriera=ID   weekend di gara della carriera
  */
 import './ui/hud.css';
 import './ui/menu.css';
@@ -38,7 +40,7 @@ async function start(): Promise<void> {
 
   if (route === 'guida' && trackId) {
     const { Game } = await import('./game/Game');
-    const game = new Game(app, ui, trackId, params.get('da') === 'editor', params.get('auto'));
+    const game = new Game(app, ui, trackId, params.get('da') === 'editor', params.get('auto'), params.get('carriera'));
     // Solo in sviluppo: il gioco è ispezionabile dalla console del browser (window.game, devTools)
     if (import.meta.env.DEV) {
       (window as unknown as { game: unknown }).game = game;
@@ -55,6 +57,12 @@ async function start(): Promise<void> {
     const editor = new Editor(ui, data);
     if (import.meta.env.DEV) (window as unknown as { editor: unknown }).editor = editor;
     await editor.init();
+    return;
+  }
+
+  if (route === 'carriera') {
+    const { CareerScreen } = await import('./career/CareerScreen');
+    await new CareerScreen(ui).show(params.get('id'));
     return;
   }
 

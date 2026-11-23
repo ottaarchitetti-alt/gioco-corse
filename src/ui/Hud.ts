@@ -71,7 +71,9 @@ export interface HudData {
   /** Monoposto: batteria, potenza elettrica, modalità, Overtake mode, ali aperte (null = auto senza ERS) */
   ers: { charge: number; powerKW: number; mode: string; overtake: 'no' | 'disponibile' | 'attivo'; aeroOpen: number; aeroZone: boolean } | null;
   /** Una voce per gomma: ant. sx, ant. dx, post. sx, post. dx */
-  tyres: { temp: number; core: number; pressure: number; tread: number; grip: number; optimal: number }[];
+  tyres: { temp: number; core: number; pressure: number; tread: number; grip: number; optimal: number; puncture?: boolean }[];
+  /** Danni (null = auto intatta) */
+  damage: { frontWing: number; rearWing: number; floor: number; suspension: number; engine: number } | null;
 }
 
 /** Colore della temperatura gomma rispetto all'ideale: blu fredda, verde ok, rosso surriscaldata. */
@@ -106,6 +108,7 @@ export class Hud {
   readonly lapList: HTMLDivElement;
   private flag: HTMLDivElement;
   private pitEl: HTMLDivElement;
+  private damageEl: HTMLDivElement;
 
   constructor(root: HTMLElement) {
     this.laps = h('hud-panel hud-laps');
@@ -128,8 +131,9 @@ export class Hud {
     this.lapList = h('hud-panel hud-laplist mono');
     this.flag = h('hud-panel hud-flag');
     this.pitEl = h('hud-panel hud-pit');
+    this.damageEl = h('hud-panel hud-damage');
     this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div><div class="fuel mono"></div>`);
-    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.pitEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.pitEl, this.damageEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -233,8 +237,20 @@ export class Hud {
       const bar = c.querySelector('.w i') as HTMLElement;
       bar.style.width = `${t.tread * 100}%`;
       bar.style.background = t.tread > 0.5 ? '#3ddc84' : t.tread > 0.25 ? '#ffcc00' : '#ff4d4d';
+      c.classList.toggle('punct', !!t.puncture);
+      if (t.puncture) (c.querySelector('.p') as HTMLElement).textContent = 'FORATA';
       c.title = `Carcassa ${Math.round(t.core)} °C · battistrada ${(t.tread * 100).toFixed(0)}% · aderenza ${(t.grip * 100).toFixed(0)}%`;
     });
+
+    // danni: una riga per parte, colore dalla gravità
+    if (d.damage) {
+      const dm = d.damage;
+      const row = (name: string, v: number) => v > 0.02
+        ? `<div class="dr"><span>${name}</span><i style="width:${Math.round(v * 100)}%;background:${v > 0.6 ? '#ff4d4d' : v > 0.25 ? '#ff9d2e' : '#ffcc00'}"></i><b>${Math.round(v * 100)}%</b></div>` : '';
+      this.damageEl.innerHTML = '<div class="title">🔧 Danni</div>' + row('Ala ant.', dm.frontWing) + row('Ala post.', dm.rearWing)
+        + row('Fondo', dm.floor) + row('Sospens.', dm.suspension) + row('Motore', dm.engine);
+      this.damageEl.style.display = 'block';
+    } else this.damageEl.style.display = 'none';
 
     this.info.innerHTML =`${d.trackName} · ${d.carName}<br>Telecamera: ${d.camera} (C) · Input: ${d.device}<br>H = aiuto · P = pausa`;
   }

@@ -187,6 +187,8 @@ export class Game {
   /** Ordine d'arrivo dell'ultima qualifica (id), per la griglia di gara */
   private lastQualiOrder: string[] | null = null;
   private contactCooldown = 0;
+  /** Ultimo urto che ha fatto danni, per coppia di auto (tempo fbClock) */
+  private hitCooldown = new Map<string, number>();
   /** Contatti tra auto (velocità d'urto > 2 m/s) dall'avvio: per statistiche e test */
   contactCount = 0;
 
@@ -686,6 +688,7 @@ export class Game {
       e.fuelAtLine = 0;
       e.fuelPerLap = null;
       e.treadAtLine = Math.min(...e.vehicle.tires.map((t) => t.tread));
+      e.vehicle.damage.reset();
       e.treadPerLap = null;
       e.vehicle.speedLimiter = 0;
       const cap = e.vehicle.car.fuelCapacity;
@@ -727,7 +730,9 @@ export class Game {
       if (this.car.pit?.refuel === false) parts.pop();
       this.radio(`Box, box! Piano: ${parts.join(', ')} · sosta ~${serviceTime(plan, this.car).toFixed(1)} s`);
     } else if (this.session.isRace) {
-      this.radio(`${e.name} è entrato ai box.`, 4);
+      // solo chi lotta con te: chi ti precede o segue di una posizione
+      const d = Math.abs(e.competitor.position - this.player.position);
+      if (d === 1) this.radio(`${e.name} (P${e.competitor.position}) è entrato ai box.`, 4);
     }
   }
 
@@ -742,10 +747,14 @@ export class Game {
       v.fitTyres(plan.compound || s.compound, s.pressureFront, s.pressureRear, start);
       e.treadAtLine = 1;
     }
+    // gomme nuove: niente più forature; ala nuova se chiesta (i bot la chiedono da soli)
+    if (plan.changeTyres) v.damage.puncture = [false, false, false, false];
+    if (plan.repair) v.damage.repairWings();
     e.pitStops++;
     if (e.isPlayer) {
       this.radio("Via, via, via! Attento all'uscita dei box.", 3);
       this.pitPlan.addFuel = 0;
+      this.pitPlan.repair = false;
     }
   }
 
@@ -1020,7 +1029,66 @@ export class Game {
 
   /** Stato dei danni per la radio. */
   private damageReport(): string {
-    return 'La macchina è a posto, nessun danno.';
+    const d = this.vehicle.damage;
+    if (!d.any) return 'La macchina è a posto, nessun danno.';
+    let t = `Vediamo: ${d.describe()}.`;
+    if (d.puncture.some(Boolean)) t += ' <b>Rientra subito ai box.</b>';
+    else if (d.frontWing > 0.25) t += ` L'ala ti costa qualche decimo al giro: la cambiamo alla sosta${this.pitPlan.repair ? ' (già preparata)' : '? Dimmi "cambiate l\'ala"'}.`;
+    else t += ' Si può continuare.';
+    return t;
+  }
+
+  /**
+   * Urto: danni all'auto nel punto colpito. Messaggi per il pilota, i bot rientrano se serve,
+   * danni gravissimi = ritiro (in prova: l'auto torna ai box riparata).
+   */
+  private applyDamage(e: CarEntity, px: number, pz: number, speed: number): void {
+    if (e.parked || e.pit) return;
+    const v = e.vehicle;
+    const dx = px - v.x, dz = pz - v.z;
+    const sinY = Math.sin(v.yaw), cosY = Math.cos(v.yaw);
+    const long = dx * sinY + dz * cosY, lat = dx * cosY - dz * sinY;
+    const col = v.car.collision ?? { halfLength: 2.3, halfWidth: 1 };
+    const broken = v.damage.hit(long, lat, col.halfLength, col.halfWidth, speed);
+    if (!broken.length) return;
+    const d = v.damage;
+    if (d.fatal && !e.competitor.retired) {
+      if (!this.session.isRace) {
+        // in prova/qualifica: l'auto viene riportata ai box e riparata
+        d.reset();
+        if (e.isPlayer) {
+          this.radio('<b>Danni troppo gravi: ti riportiamo ai box, la squadra ripara la macchina.</b>', 6, 'urgente');
+          if (!this.placeInPits(e)) this.placeOnTrack(e, e.s);
+          e.competitor.timing.invalidate('auto riparata');
+          e.competitor.timing.resetPosition();
+        } else this.resetToTrack(e);
+        return;
+      }
+      e.competitor.retired = true;
+      if (e.isPlayer) {
+        this.radio(`<b>Danni troppo gravi (${broken.join(', ')}): la gara finisce qui.</b>`, 8, 'urgente');
+        this.finishSim = { delay: 5, started: false };
+      } else this.radio(`${e.name}: incidente, ritirato.`, 5, 'importante');
+      return;
+    }
+    const compId = (x: Vehicle) => Object.keys(x.car.tire.compounds).find((k) => x.car.tire.compounds[k].name === x.tires[0].compound.name) ?? x.car.setup.compound;
+    if (e.isPlayer) {
+      if (d.puncture.some(Boolean)) {
+        this.pitPlan.changeTyres = true;
+        this.radio('<b>Foratura! Rientra ai box piano, la gomma è andata.</b>', 8, 'urgente');
+      } else {
+        if (d.frontWing > 0.25) this.pitPlan.repair = true;
+        this.radio(`<b>Contatto: danni a ${broken.join(', ')}.</b> ${d.frontWing > 0.25 ? 'Prepariamo un\'ala nuova per la sosta.' : 'Controlliamo i dati.'}`, 7, 'importante');
+      }
+    } else if (this.track.pit && !e.pitRequest && (d.puncture.some(Boolean) || d.frontWing > 0.35)) {
+      // il bot rientra: gomme nuove se ha forato, ala nuova se è rotta
+      e.pitRequest = { changeTyres: d.puncture.some(Boolean), compound: compId(v), addFuel: 0, repair: d.frontWing > 0.35 };
+    }
+  }
+
+  /** Velocità dei bot: più piano con l'auto danneggiata */
+  private botPace(e: CarEntity): number {
+    return e.vehicle.damage.paceFactor();
   }
 
 
@@ -1190,6 +1258,7 @@ export class Game {
         this.lastSteer = input.steer;
       } else {
         const others = traffic.filter((_, j) => j !== k && !this.entities[j].parked);
+        e.bot!.paceScale = this.botPace(e);
         const cmd = e.bot!.drive(dt, e.s, e.d, e.competitor.timing.totalDistance, others, hold);
         // i bot che hanno finito proseguono piano (giro di rientro)
         input = e.competitor.finished || finished ? { ...cmd, throttle: Math.min(cmd.throttle, 0.25) } : cmd;
@@ -1204,6 +1273,17 @@ export class Game {
     this.contactCooldown -= dt;
     for (const h of hits) {
       if (h.speed > 2) this.contactCount++;
+      if (h.speed > 5) {
+        const byV = (v: Vehicle) => this.entities.find((x) => x.vehicle === v);
+        const ea = byV(h.a), eb = byV(h.b);
+        // un contatto dura diversi passi: conta solo il primo colpo di ogni coppia (0,6 s)
+        const key = ea && eb ? [ea.id, eb.id].sort().join('|') : '';
+        if (key && (this.hitCooldown.get(key) ?? 0) <= this.fbClock) {
+          this.hitCooldown.set(key, this.fbClock + 0.6);
+          if (ea) this.applyDamage(ea, h.px, h.pz, h.speed);
+          if (eb) this.applyDamage(eb, h.px, h.pz, h.speed);
+        }
+      }
       if ((h.a === this.vehicle || h.b === this.vehicle) && h.speed > 2 && this.contactCooldown <= 0) {
         this.hud.message('Contatto!', 1);
         this.contactCooldown = 1;
@@ -1896,10 +1976,14 @@ export class Game {
         aeroOpen: v.hybrid.aeroOpen,
         aeroZone: v.hybrid.inAeroZone,
       } : null,
-      tyres: v.tires.map((ty) => ({
+      tyres: v.tires.map((ty, i) => ({
         temp: ty.surfaceTemp, core: ty.coreTemp, pressure: ty.pressure,
-        tread: ty.tread, grip: ty.gripFactor, optimal: ty.compound.optimalTemp,
+        tread: ty.tread, grip: ty.gripFactor, optimal: ty.compound.optimalTemp, puncture: v.damage.puncture[i],
       })),
+      damage: v.damage.any ? {
+        frontWing: v.damage.frontWing, rearWing: v.damage.rearWing, floor: v.damage.floor,
+        suspension: v.damage.suspension, engine: v.damage.engine,
+      } : null,
     }, frameDt);
 
     // minimappa (nascosta quando a destra c'è la telemetria o l'elenco dei giri)

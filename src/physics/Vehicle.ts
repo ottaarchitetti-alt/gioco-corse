@@ -22,6 +22,7 @@
 import { clamp, damp, RAD, RPM_TO_RADS } from '../core/math';
 import type { DriverInput } from '../input/InputManager';
 import { AIR_DENSITY } from './Aero';
+import { DamageState } from './Damage';
 import { HybridSystem } from './Hybrid';
 import type { CarParams } from './CarParams';
 import { Drivetrain } from './Drivetrain';
@@ -122,6 +123,8 @@ export class Vehicle {
   readonly hybrid: HybridSystem;
   /** Deportanza totale dell'ultimo passo (N), per telemetria */
   downforceN = 0;
+  /** Danni (urti): li applica Game, qui solo gli effetti */
+  readonly damage = new DamageState();
 
   private tcCut = 0;
   private loads = [0, 0, 0, 0];
@@ -189,6 +192,9 @@ export class Vehicle {
     // ---------- Sterzo ----------
     this.steeringWheelDeg = input.steer * (car.steeringLockDeg / 2);
     this.steerAngle = (this.steeringWheelDeg / car.steeringRatio) * RAD;
+    const dmg = this.damage.effects();
+    // sospensione piegata: l'auto tira da un lato
+    this.steerAngle += dmg.steerPull;
 
     // ---------- Cambio ----------
     const avgRearOmega = (this.tires[RL].omega + this.tires[RR].omega) / 2;
@@ -218,6 +224,8 @@ export class Vehicle {
     throttle *= 1 - this.tcCut * (strongTc ? 1 : 0.85);
     // serbatoio vuoto: il motore si spegne
     if (this.fuel <= 0) throttle = 0;
+    // motore danneggiato: meno potenza
+    throttle *= dmg.power;
     // limitatore box: taglia il gas sopra la velocità consentita
     if (this.speedLimiter > 0 && this.speed > this.speedLimiter - 0.3) throttle = Math.min(throttle, Math.max(0, (this.speedLimiter - this.speed) * 0.5));
     this.appliedThrottle = throttle;
@@ -265,9 +273,9 @@ export class Vehicle {
       const vyw = -vcx * sd + vcy * cd;
 
       const surface = this.surfaces[i];
-      const f = tire.computeForces(vxw, vyw, r, surface.grip, this.env, dt);
-      // Resistenza al rotolamento (asfalto + extra della superficie, es. erba)
-      const rr = (car.tire.rollingResistance + surface.drag) * tire.load * clamp(vxw, -1, 1);
+      const f = tire.computeForces(vxw, vyw, r, surface.grip * this.damage.wheelGrip(i), this.env, dt);
+      // Resistenza al rotolamento (asfalto + extra della superficie, es. erba; gomma forata)
+      const rr = (car.tire.rollingResistance + surface.drag + (this.damage.puncture[i] ? 0.06 : 0)) * tire.load * clamp(vxw, -1, 1);
       const fx = f.fx - rr;
 
       // ---- Rotazione della ruota ----
@@ -301,7 +309,7 @@ export class Vehicle {
     // aree aerodinamiche attuali (ali aperte o chiuse) ed effetto suolo
     const areas = this.hybrid.aeroAreas();
     if (this.speed > 0.01) {
-      const drag = 0.5 * AIR_DENSITY * areas.drag * this.speed * this.speed * this.dragFactor;
+      const drag = 0.5 * AIR_DENSITY * areas.drag * this.speed * this.speed * this.dragFactor * dmg.drag;
       fLong -= (drag * this.vLong) / this.speed;
       fLat -= (drag * this.vLat) / this.speed;
     }
@@ -311,8 +319,9 @@ export class Vehicle {
     const down = 0.5 * AIR_DENSITY * areas.lift * vF * vF * ge * this.downforceFactor;
     // ali aperte: il flap posteriore scarica soprattutto il retrotreno → bilanciamento un po' più avanti
     const bal = car.aeroBalanceFront + this.hybrid.aeroOpen * 0.04;
-    const aero = { front: down * bal, rear: down * (1 - bal) };
-    this.downforceN = down;
+    // ali e fondo danneggiati: meno carico davanti/dietro
+    const aero = { front: down * bal * dmg.aeroFront, rear: down * (1 - bal) * dmg.aeroRear };
+    this.downforceN = aero.front + aero.rear;
 
     // ---------- Integrazione (Eulero semi-implicito) ----------
     const axLocal = fLong / m;

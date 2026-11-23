@@ -239,3 +239,12 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .radio-mic { bottom: 130px; left: 50%; transform: translateX(-50%); font-size: 16px; display: none; padding: 8px 16px; }
 .radio-mic.on { border: 2px solid #ff4d4d; box-shadow: 0 0 14px rgba(255, 77, 77, 0.5); }
 .hud-msg { top: 32%; }
+
+/* ===== Danni ===== */
+.hud-damage { bottom: 200px; right: 16px; min-width: 170px; font-size: 12px; padding: 7px 10px; display: none; border-left: 3px solid #ff9d2e; }
+.hud-damage .title { font-weight: 700; color: #ff9d2e; margin-bottom: 4px; }
+.hud-damage .dr { display: grid; grid-template-columns: 62px 1fr 34px; align-items: center; gap: 6px; margin: 2px 0; }
+.hud-damage .dr i { display: block; height: 6px; border-radius: 3px; }
+.hud-damage .dr b { text-align: right; font-variant-numeric: tabular-nums; }
+.hud-tyres .tyre.punct { border-color: #ff4d4d !important; background: rgba(255, 77, 77, 0.35) !important; animation: blink 0.6s infinite alternate; }
+@keyframes blink { to { opacity: 0.5; } }

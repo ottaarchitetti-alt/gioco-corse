@@ -58,6 +58,9 @@ export interface CollisionEvent {
   b: Vehicle;
   /** velocità d'urto (m/s) */
   speed: number;
+  /** punto di contatto (mondo) */
+  px: number;
+  pz: number;
 }
 
 /** Risolve le collisioni tra tutte le coppie di auto. Restituisce gli urti avvenuti. */
@@ -139,5 +142,5 @@ function collide(A: Vehicle, B: Vehicle): CollisionEvent | null {
   A.yawRate -= (rAz * Jx - rAx * Jz) / iA;
   B.yawRate += (rBz * Jx - rBx * Jz) / iB;
 
-  return { a: A, b: B, speed: -vn };
+  return { a: A, b: B, speed: -vn, px, pz };
 }

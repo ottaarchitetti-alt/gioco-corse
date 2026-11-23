@@ -41,6 +41,10 @@ export interface Compound {
   heatMul: number;
   /** Colore della fascia sul fianco della gomma (monoposto) */
   color?: string;
+  /** Gomma da pioggia (intermedia o da bagnato) */
+  wet?: boolean;
+  /** Aderenza con pista asciutta, metà bagnata, fradicia (moltiplicatori; mancante = slick) */
+  wetGrip?: [number, number, number];
 }
 
 /**

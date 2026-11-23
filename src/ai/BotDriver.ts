@@ -112,6 +112,15 @@ export class BotDriver {
   clipKmh = 270;
   /** Gas massimo che le ruote posteriori riescono a scaricare a terra (dosaggio in trazione) */
   private tractionLimit = 1;
+  /** Ritirato: accosta fuori dalla pista e si ferma (lo imposta Game) */
+  pullOver = false;
+  private pullSide = 0;
+  /** Neutralizzazione (safety car / VSC): niente sorpassi e velocità ridotta (li imposta Game) */
+  noPass = false;
+  /** Moltiplicatore della velocità obiettivo (VSC, danni, pista bagnata) */
+  paceScale = 1;
+  /** Velocità massima (m/s): safety car e VSC */
+  speedCap = Infinity;
   /** Bandiere viste in questo passo */
   flags = { yellow: false, blue: false };
 
@@ -185,6 +194,7 @@ export class BotDriver {
       return out;
     }
     this.wrongWayTime = 0;
+    if (this.pullOver) return this.driveOff(dt, idx, d);
     const speed = Math.max(v.speed, 1);
     // dove può stare il centro dell'auto: mezza larghezza dell'auto + mezzo metro dal bordo
     const edgeMargin = (v.car.collision?.halfWidth ?? 1.0) + 0.5;
@@ -259,7 +269,8 @@ export class BotDriver {
 
       // ---- inizio sorpasso ----
       // un sorpasso si prepara in rettilineo: non si butta dentro in frenata da lontano
-      if (this.mode !== 'sorpasso' && front && front.gap < 28 && !brakingZone) {
+      if (this.noPass && this.mode === 'sorpasso') { this.mode = 'linea'; this.passTarget = null; }
+      if (this.mode !== 'sorpasso' && front && front.gap < 28 && !brakingZone && !this.noPass) {
         const faster = v.speed > front.speed + 1.5 || this.target(idx) > front.speed + 2.5;
         const stuck = this.followTime > 3 - this.skill.aggression * 1.5;
         if ((faster || stuck) && Math.random() < 0.2 + this.skill.aggression * 0.5) {
@@ -314,7 +325,7 @@ export class BotDriver {
         //  - mai in frenata (niente mosse mentre si stacca);
         //  - mai se l'attaccante è già affiancato (lì si lascia una macchina di spazio, vedi sopra);
         //  - si sposta di poco (copre la linea, non chiude contro l'erba).
-        if (attacker && !this.defendUsed && !brakingZone && attacker.gap > -25 && attacker.gap < -alongside
+        if (attacker && !this.noPass && !this.defendUsed && !brakingZone && attacker.gap > -25 && attacker.gap < -alongside
           && Math.abs(attacker.d - d) > 1.0) {
           const inside = this.nextCornerSide(idx, 300);
           const attackSide = Math.sign(attacker.d - d);
@@ -444,6 +455,7 @@ export class BotDriver {
     }
     // in sorpasso si stacca un filo più tardi (e si rischia di più)
     if (this.mode === 'sorpasso' && !brakingZone) vt *= 1 + 0.02 * this.skill.aggression;
+    vt = Math.min(vt * this.paceScale, this.speedCap);
     if (this.flags.yellow) vt *= 0.93;
     if (this.flags.blue) vt *= 0.95;
     if (wantAvoid !== null) vt = Math.min(vt, 22);
@@ -525,6 +537,32 @@ export class BotDriver {
     }
 
     this.stuckTime = v.speed < 1.5 ? this.stuckTime + dt : 0;
+    return out;
+  }
+
+  /**
+   * Auto ritirata: accosta fuori dalla carreggiata (dal lato dove si trova) frenando con calma,
+   * poi si ferma lì; i commissari la portano via (lo decide Game).
+   */
+  private driveOff(dt: number, idx: number, d: number): DriverInput {
+    const v = this.vehicle, track = this.line.track, n = this.line.n;
+    const out = emptyInput();
+    if (this.pullSide === 0) this.pullSide = d >= 0 ? 1 : -1;
+    const step = track.length / n;
+    const ti = (idx + Math.round((8 + v.speed * 0.6) / step)) % n;
+    const ts = track.samples[ti];
+    const lat = this.pullSide * (ts.width / 2 + 3);
+    const tx = ts.x + ts.nx * lat - v.x, tz = ts.z + ts.nz * lat - v.z;
+    const sinY = Math.sin(v.yaw), cosY = Math.cos(v.yaw);
+    const lz = tx * sinY + tz * cosY, lx = tx * cosY - tz * sinY;
+    const curv = (2 * Math.sin(Math.atan2(lx, Math.max(0.1, lz)))) / Math.max(Math.hypot(lx, lz), 1);
+    const maxDelta = ((v.car.steeringLockDeg / 2) / v.car.steeringRatio) * RAD;
+    const want = v.speed < 0.5 ? 0 : clamp(Math.atan(v.car.wheelbase * curv) / maxDelta, -0.6, 0.6);
+    this.steer += clamp(want - this.steer, -3 * dt, 3 * dt);
+    out.steer = this.steer;
+    out.throttle = 0;
+    out.brake = v.speed > 30 ? 0.25 : v.speed > 3 ? 0.45 : 1;
+    this.stuckTime = 0;
     return out;
   }
 

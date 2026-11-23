@@ -213,3 +213,29 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .overlay ul.weekend li.cur { color: var(--accent); font-weight: 700; }
 .overlay ul.weekend li.done { color: var(--good); }
 .overlay .career-race { font-size: 15px; background: rgba(255, 204, 0, 0.1); border-left: 3px solid var(--accent); padding: 6px 10px; }
+
+/* ===== Radio del box (messaggi grandi in alto al centro, menu, microfono) ===== */
+.hud-radio2 { position: absolute; top: 140px; left: 50%; transform: translateX(-50%); width: min(620px, 56vw); display: flex; flex-direction: column; gap: 6px; pointer-events: none; z-index: 6; }
+.hud-radio2 .rmsg { background: rgba(10, 14, 20, 0.88); border-left: 5px solid var(--accent); border-radius: 8px; padding: 8px 14px 9px; box-shadow: 0 4px 18px rgba(0,0,0,0.45); animation: rin 0.25s ease-out; transition: opacity 0.6s; }
+.hud-radio2 .rmsg.fading { opacity: 0; }
+.hud-radio2 .rmsg .who { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; color: var(--accent); margin-bottom: 2px; }
+.hud-radio2 .rmsg .txt { font-size: 17px; line-height: 1.4; color: #f2f5f8; }
+.hud-radio2 .rmsg .txt b { color: #ffe27a; }
+.hud-radio2 .rmsg.info .txt { font-size: 15px; color: #d6dde6; }
+.hud-radio2 .rmsg.importante, .hud-radio2 .rmsg.urgente { border-left-color: #ff9d2e; }
+.hud-radio2 .rmsg.urgente { background: rgba(60, 14, 10, 0.92); border-left-color: #ff4d4d; }
+.hud-radio2 .rmsg.tu { border-left-color: #8fa3b8; background: rgba(20, 26, 34, 0.8); }
+.hud-radio2 .rmsg.tu .who { color: #8fa3b8; }
+.hud-radio2 .rmsg.tu .txt { font-size: 14px; font-style: italic; }
+.hud-radio2 .rmsg.direzione { border-left-color: #ffd400; }
+.hud-radio2 .rmsg.direzione .who { color: #ffd400; }
+@keyframes rin { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.radio-menu { top: 50%; right: 16px; transform: translateY(-50%); min-width: 290px; display: none; font-size: 15px; padding: 10px 12px; border-left: 4px solid var(--accent); z-index: 7; }
+.radio-menu .title { font-weight: 800; color: var(--accent); margin-bottom: 6px; }
+.radio-menu .title small { display: block; font-weight: 400; font-size: 11px; color: var(--hud-dim); }
+.radio-menu .item { padding: 4px 6px; border-radius: 4px; display: flex; gap: 8px; align-items: center; }
+.radio-menu .item.sel { background: rgba(255, 204, 0, 0.22); }
+.radio-menu .item .k { display: inline-block; width: 20px; text-align: center; border: 1px solid #556; border-radius: 3px; font-size: 12px; color: var(--hud-dim); }
+.radio-mic { bottom: 130px; left: 50%; transform: translateX(-50%); font-size: 16px; display: none; padding: 8px 16px; }
+.radio-mic.on { border: 2px solid #ff4d4d; box-shadow: 0 0 14px rgba(255, 77, 77, 0.5); }
+.hud-msg { top: 32%; }

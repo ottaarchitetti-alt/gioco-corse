@@ -16,10 +16,10 @@
  */
 import type { InputManager, PedalCalibration, SteerMode } from './InputManager';
 
-type Step = 'device' | 'center' | 'sweep' | 'quarter' | 'throttle' | 'brake' | 'up' | 'down' | 'ersUp' | 'ersDown' | 'test';
-const ORDER: Step[] = ['device', 'center', 'sweep', 'quarter', 'throttle', 'brake', 'up', 'down', 'ersUp', 'ersDown', 'test'];
+type Step = 'device' | 'center' | 'sweep' | 'quarter' | 'throttle' | 'brake' | 'up' | 'down' | 'ersUp' | 'ersDown' | 'radio' | 'talk' | 'test';
+const ORDER: Step[] = ['device', 'center', 'sweep', 'quarter', 'throttle', 'brake', 'up', 'down', 'ersUp', 'ersDown', 'radio', 'talk', 'test'];
 /** passi in cui si registra un pulsante */
-const BUTTON_STEPS: Step[] = ['up', 'down', 'ersUp', 'ersDown'];
+const BUTTON_STEPS: Step[] = ['up', 'down', 'ersUp', 'ersDown', 'radio', 'talk'];
 
 const TEXT: Record<Step, { title: string; body: string }> = {
   device: { title: 'Dispositivo', body: 'Scegli il volante dall\'elenco. Se non compare, muovilo o premi un suo pulsante (il browser lo "vede" solo dopo un input).' },
@@ -32,6 +32,8 @@ const TEXT: Record<Step, { title: string; body: string }> = {
   down: { title: 'Paletta marcia giù', body: 'Premi la <b>paletta SINISTRA</b> (marcia giù).' },
   ersUp: { title: 'Batteria su (monoposto)', body: 'Premi il tasto che vuoi usare per <b>alzare</b> la modalità della batteria (ricarica → bilanciata → attacco). Sul G29 di solito il <b>cerchio</b>.' },
   ersDown: { title: 'Batteria giù (monoposto)', body: 'Premi il tasto che vuoi usare per <b>abbassare</b> la modalità della batteria (attacco → bilanciata → ricarica). Sul G29 di solito il <b>triangolo</b>.' },
+  radio: { title: 'Radio del box', body: 'Premi il tasto per aprire il <b>menu radio</b> (domande e ordini al box; premuto di nuovo conferma la voce scelta). Sul G29 di solito <b>R2</b>.' },
+  talk: { title: 'Parla al box (microfono)', body: 'Premi il tasto per <b>parlare al box</b> con il microfono ("box questo giro", "come vanno le gomme?"). Sul G29 di solito <b>L2</b>.' },
   test: { title: 'Prova e regolazioni', body: 'Muovi volante e pedali: le barre devono seguire i tuoi movimenti. Regola se serve, poi Salva.' },
 };
 
@@ -111,7 +113,9 @@ export class WheelCalibration {
         if (this.step === 'up') this.draft.shiftUpButton = newPress;
         else if (this.step === 'down') this.draft.shiftDownButton = newPress;
         else if (this.step === 'ersUp') this.draft.ersModeButton = newPress;
-        else this.draft.ersDownButton = newPress;
+        else if (this.step === 'ersDown') this.draft.ersDownButton = newPress;
+        else if (this.step === 'radio') this.draft.radioButton = newPress;
+        else this.draft.talkButton = newPress;
         this.msg = `Pulsante ${newPress} registrato.`;
         this.next();
       }
@@ -234,7 +238,8 @@ export class WheelCalibration {
       Object.assign(saved, tmp);
       const btns = p.buttons.map((b, i) => (b.pressed ? i : -1)).filter((i) => i >= 0);
       const shiftTxt = btns.includes(this.draft.shiftUpButton) ? 'MARCIA SU' : btns.includes(this.draft.shiftDownButton) ? 'MARCIA GIÙ'
-        : btns.includes(this.draft.ersModeButton) ? 'BATTERIA SU' : btns.includes(this.draft.ersDownButton) ? 'BATTERIA GIÙ' : '';
+        : btns.includes(this.draft.ersModeButton) ? 'BATTERIA SU' : btns.includes(this.draft.ersDownButton) ? 'BATTERIA GIÙ'
+        : btns.includes(this.draft.radioButton) ? 'RADIO BOX' : btns.includes(this.draft.talkButton) ? 'MICROFONO' : '';
       return `
         <div class="meter"><span>Volante</span><b class="mono">${deg >= 0 ? 'sx' : 'dx'} ${Math.abs(deg).toFixed(0)}°</b></div>
         <div class="steerbar"><i style="left:${(0.5 - steer / 2) * 100}%"></i></div>
@@ -275,7 +280,7 @@ export class WheelCalibration {
           <input type="range" min="1" max="2" step="0.05" data-k="steerLinearity" value="${d.steerLinearity}"></label>
         <label>Zona morta sterzo (°) <input type="number" min="0" max="10" step="0.5" data-k="steerDeadzoneDeg" value="${d.steerDeadzoneDeg}"></label>
         <label>Zona morta pedali (%) <input type="number" min="0" max="20" step="1" data-k="pedalDeadzone" value="${Math.round(d.pedalDeadzone * 100)}"></label>
-        <p class="small">Assi: sterzo ${d.steerAxis}, acceleratore ${d.throttle.axis}, freno ${d.brake.axis} · Palette: su ${d.shiftUpButton}, giù ${d.shiftDownButton} · Batteria: su ${d.ersModeButton}, giù ${d.ersDownButton}${this.input.carSteeringLockDeg !== d.hardwareLockDeg && d.steerMode === 'reale' ? `<br>⚠ Il tuo volante ruota ${d.hardwareLockDeg}°, quello dell'auto ${this.input.carSteeringLockDeg}°: in modalità reale oltre ±${this.input.carSteeringLockDeg / 2}° lo sterzo è a fine corsa.` : ''}</p>`;
+        <p class="small">Assi: sterzo ${d.steerAxis}, acceleratore ${d.throttle.axis}, freno ${d.brake.axis} · Palette: su ${d.shiftUpButton}, giù ${d.shiftDownButton} · Batteria: su ${d.ersModeButton}, giù ${d.ersDownButton} · Radio ${d.radioButton}, microfono ${d.talkButton}${this.input.carSteeringLockDeg !== d.hardwareLockDeg && d.steerMode === 'reale' ? `<br>⚠ Il tuo volante ruota ${d.hardwareLockDeg}°, quello dell'auto ${this.input.carSteeringLockDeg}°: in modalità reale oltre ±${this.input.carSteeringLockDeg / 2}° lo sterzo è a fine corsa.` : ''}</p>`;
     } else {
       content = '<div class="live axes"></div>';
     }

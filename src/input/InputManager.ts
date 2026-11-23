@@ -31,7 +31,9 @@ export const emptyInput = (): DriverInput => ({
 });
 
 /** Azioni "di gioco" (non di guida) che scattano una volta per pressione. */
-export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug' | 'overtake' | 'ersMode' | 'ersUp' | 'ersDown' | 'flashback';
+export type GameAction = 'camera' | 'reset' | 'pause' | 'help' | 'telemetry' | 'graphs' | 'laps' | 'ghost' | 'mute' | 'debug' | 'overtake' | 'ersMode' | 'ersUp' | 'ersDown' | 'flashback'
+  /** radio del box: menu, microfono, voce n. 1–9 del menu */
+  | 'radio' | 'talk' | `radio${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 /** Un pedale calibrato: su quale asse sta e quanto vale a riposo e a fondo corsa. */
 export interface PedalCalibration {
@@ -78,6 +80,10 @@ export interface WheelSettings {
   ersDownButton: number;
   /** Flashback: torna indietro di qualche secondo (-1 = nessuno) */
   flashbackButton: number;
+  /** Radio del box: apre il menu / conferma (-1 = nessuno) */
+  radioButton: number;
+  /** Microfono: parla al box (-1 = nessuno) */
+  talkButton: number;
 }
 
 const DEFAULT_WHEEL: WheelSettings = {
@@ -100,6 +106,8 @@ const DEFAULT_WHEEL: WheelSettings = {
   ersModeButton: 2, // G29: tasto cerchio = batteria su
   ersDownButton: 3, // G29: tasto triangolo = batteria giù
   flashbackButton: 1, // G29: tasto quadrato
+  radioButton: 6, // G29: R2
+  talkButton: 7, // G29: L2
 };
 
 /** Converte le impostazioni salvate dalle versioni precedenti (Fasi 1–4). */
@@ -133,7 +141,13 @@ const ACTION_KEYS: Record<string, GameAction> = {
   KeyK: 'ersUp',
   KeyJ: 'ersDown',
   Backspace: 'flashback',
+  KeyB: 'radio',
+  KeyV: 'talk',
 };
+for (let i = 1; i <= 9; i++) {
+  ACTION_KEYS[`Digit${i}`] = `radio${i}` as GameAction;
+  ACTION_KEYS[`Numpad${i}`] = `radio${i}` as GameAction;
+}
 
 export type InputDevice = 'tastiera' | 'gamepad' | 'volante';
 
@@ -368,6 +382,8 @@ export class InputManager {
         if (edge(this.wheel.ersModeButton)) this.pendingActions.push('ersUp');
         if (edge(this.wheel.ersDownButton)) this.pendingActions.push('ersDown');
         if (edge(this.wheel.flashbackButton)) this.pendingActions.push('flashback');
+        if (edge(this.wheel.radioButton)) this.pendingActions.push('radio');
+        if (edge(this.wheel.talkButton)) this.pendingActions.push('talk');
       } else {
         // gamepad: X = Overtake mode, B = modalità batteria
         if (edge(2)) this.pendingActions.push('overtake');
@@ -375,6 +391,8 @@ export class InputManager {
         if (edge(12)) this.pendingActions.push('ersUp'); // croce su
         if (edge(13)) this.pendingActions.push('ersDown'); // croce giù
         if (edge(0)) this.pendingActions.push('flashback'); // A
+        if (edge(14)) this.pendingActions.push('radio'); // croce sinistra
+        if (edge(15)) this.pendingActions.push('talk'); // croce destra
       }
       if (!isWheel) {
         if (pressed[3] && !this.prevButtons[3]) this.pendingActions.push('camera');

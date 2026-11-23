@@ -23,6 +23,8 @@ export interface PitPlan {
   compound: string;
   /** kg di carburante da aggiungere */
   addFuel: number;
+  /** cambio dell'ala anteriore danneggiata (e riparazioni rapide): +6 s */
+  repair?: boolean;
 }
 
 /** Durata della sosta (s): sollevamento + max(cambio gomme, rifornimento) — si fanno insieme. */
@@ -31,7 +33,7 @@ export function serviceTime(plan: PitPlan, car?: CarParams): number {
   const p = car?.pit ?? { fixedTime: 4, tyreChangeTime: 13, refuel: true };
   const tyres = plan.changeTyres ? p.tyreChangeTime : 0;
   const fuel = p.refuel ? plan.addFuel / 2.5 : 0; // 2,5 kg al secondo
-  return p.fixedTime + Math.max(tyres, fuel);
+  return p.fixedTime + Math.max(tyres, fuel) + (plan.repair ? 6 : 0);
 }
 
 export class PitController {

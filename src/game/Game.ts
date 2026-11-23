@@ -23,6 +23,7 @@ import { Vehicle, type DrivingAids, type GroundContact, type Surface } from '../
 import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
 import { Minimap } from '../ui/Minimap';
+import { BoxRadio, type RadioIntent, type RadioPrio } from './BoxRadio';
 import {
   CareerStore, PLAYER_ID, applyCarLevels, botSkillOf, failureChance, playerDriver, playerTeam, raceLaps,
   racingDrivers, recordRace, teamOf, teamStandings, driverStandings, ordinal, type Career,
@@ -95,6 +96,13 @@ interface CarEntity {
   /** posizione sulla pista */
   s: number;
   d: number;
+  /** battistrada al passaggio sul traguardo e consumo medio al giro (per la strategia) */
+  treadAtLine: number;
+  treadPerLap: number | null;
+  /** ritirata e portata via dai commissari: fuori dalla pista, invisibile, ignorata da tutti */
+  parked: boolean;
+  /** da quanto è ferma dopo il ritiro (s) */
+  retireT: number;
   /** punto di partenza (per la partenza anticipata) */
   startX: number;
   startZ: number;
@@ -137,8 +145,6 @@ export class Game {
   private raceGrid: string[] = [];
   /** guasti in arrivo: distanza (m) a cui l'auto si rompe */
   private failAt = new Map<CarEntity, number>();
-  /** auto rotte da portare ai box dopo qualche secondo */
-  private toPark = new Map<CarEntity, number>();
   /** Il pilota ha finito la gara: dopo un attimo si simula velocemente l'arrivo degli altri */
   private finishSim: { delay: number; started: boolean } | null = null;
   /** Flashback: fotografie degli ultimi secondi e stato della scelta (null = non attivo) */
@@ -157,6 +163,11 @@ export class Game {
   private radioSaid = new Set<string>();
   /** Distanza sulla pista dell'ingresso box */
   private pitEntryS = 0;
+  /** Radio del box: messaggi, voce, menu, microfono */
+  private boxRadio!: BoxRadio;
+  /** Il pilota ha chiamato "box questo giro" (il box ricorda di entrare prima della corsia) */
+  private boxCall = false;
+  private boxCallReminded = false;
   private playerRig!: CarRig;
   private track!: TrackSpline;
   private line!: RacingLine;
@@ -292,6 +303,13 @@ export class Game {
     // ---- HUD e pannelli ----
     this.cameras = new CameraRig(this.renderer.camera, this.playerEntity.view);
     this.hud = new Hud(this.uiEl);
+    this.boxRadio = new BoxRadio(
+      this.uiEl,
+      (i, spoken) => this.radioAnswer(i, spoken),
+      () => Object.fromEntries(Object.entries(this.car.tire.compounds).map(([id, c]) => [id, c.name])),
+      () => this.pitPlan.compound,
+      { voice: this.settings.radioVoice, volume: this.settings.radioVolume * this.settings.volume * 2 },
+    );
     this.graph = new TelemetryGraph(this.uiEl);
     this.minimap = new Minimap(this.track);
     this.uiEl.appendChild(this.minimap.el);
@@ -327,7 +345,7 @@ export class Game {
       id, name, isPlayer, bot: null,
       wheelHints: [-1, -1, -1, -1], pitHints: [-1, -1, -1, -1], hint: -1, s: 0, d: 0, startX: 0, startZ: 0,
       pit: null, stall: null, pitRequest: null, pitStops: 0, fuelAtLine: 0, fuelPerLap: null,
-      compoundsUsed: new Set<string>(), ruleChecked: false,
+      compoundsUsed: new Set<string>(), ruleChecked: false, parked: false, retireT: 0, treadAtLine: 1, treadPerLap: null,
     } as unknown as CarEntity;
     e.vehicle = new Vehicle(car, (i, x, z) => this.groundAt(e, i, x, z));
     e.view = new CarView(rig, e.vehicle);
@@ -402,7 +420,6 @@ export class Game {
     this.fb = null;
     this.finishSim = null;
     this.failAt.clear();
-    this.toPark.clear();
     this.careerSaved = false;
     this.placeForSession();
 
@@ -668,6 +685,8 @@ export class Game {
       e.vehicle.fuelUsed = 0;
       e.fuelAtLine = 0;
       e.fuelPerLap = null;
+      e.treadAtLine = Math.min(...e.vehicle.tires.map((t) => t.tread));
+      e.treadPerLap = null;
       e.vehicle.speedLimiter = 0;
       const cap = e.vehicle.car.fuelCapacity;
       if (e.isPlayer) e.vehicle.fuel = Math.min(cap, e.vehicle.car.fuelKg);
@@ -679,6 +698,7 @@ export class Game {
     });
     this.radioSaid.clear();
     this.pitPlan.compound = this.car.setup.compound;
+    this.boxCall = false;
   }
 
   /** Il pilota è entrato nella corsia box? (all'inizio della corsia, uscendo dalla pista) */
@@ -699,6 +719,7 @@ export class Game {
     e.pit = new PitController(this.track.pit!, e.stall!, e.vehicle, plan, (p) => this.doService(e, p));
     e.pitRequest = null;
     if (e.isPlayer) {
+      this.boxCall = false;
       const parts = [
         plan.changeTyres ? `gomme ${this.car.tire.compounds[plan.compound]?.name ?? plan.compound}` : 'niente gomme',
         plan.addFuel > 0 ? `+${plan.addFuel.toFixed(0)} kg di benzina` : 'niente benzina',
@@ -719,6 +740,7 @@ export class Game {
       const s = v.car.setup;
       const start = this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 3;
       v.fitTyres(plan.compound || s.compound, s.pressureFront, s.pressureRear, start);
+      e.treadAtLine = 1;
     }
     e.pitStops++;
     if (e.isPlayer) {
@@ -734,6 +756,10 @@ export class Game {
     const used = e.vehicle.fuelUsed - e.fuelAtLine;
     e.fuelAtLine = e.vehicle.fuelUsed;
     if (used > 0.05 && !e.pit) e.fuelPerLap = e.fuelPerLap === null ? used : e.fuelPerLap * 0.6 + used * 0.4;
+    const tread = Math.min(...e.vehicle.tires.map((t) => t.tread));
+    const worn = e.treadAtLine - tread;
+    if (worn > 0.001 && !e.pit) e.treadPerLap = e.treadPerLap === null ? worn : e.treadPerLap * 0.6 + worn * 0.4;
+    e.treadAtLine = tread;
     const s = this.session;
     const lapsLeft = s.isRace ? s.config.laps - e.competitor.lapsDone : 99;
     if (!e.isPlayer) {
@@ -851,10 +877,152 @@ export class Game {
     if (msgs.length) this.radio(msgs.join('<br>'), 6);
   }
 
-  /** Messaggio radio del box (in basso a sinistra). */
-  private radio(html: string, seconds = 5): void {
-    this.hud?.radio(`<b>📻 Box:</b> ${html}`, seconds);
+  /** Messaggio radio del box (pannello in alto al centro; i messaggi importanti anche a voce). */
+  private radio(html: string, seconds = 6, prio?: RadioPrio): void {
+    this.boxRadio?.say(html, { seconds: seconds + 2, prio });
   }
+
+  /**
+   * Il pilota chiede qualcosa al box (menu radio o microfono): risposta con i dati veri.
+   * @param spoken true se la domanda è arrivata a voce
+   */
+  private radioAnswer(i: RadioIntent, spoken: boolean): void {
+    void spoken;
+    const e = this.playerEntity, v = e.vehicle, s = this.session;
+    const say = (html: string) => this.boxRadio.say(html, { prio: 'risposta', seconds: 10 });
+    const lapsLeft = s.isRace ? Math.max(0, s.config.laps - e.competitor.lapsDone) : null;
+    const comp = (id: string) => this.car.tire.compounds[id]?.name ?? id;
+    const tread = Math.min(...v.tires.map((t) => t.tread));
+    switch (i.type) {
+      case 'gomme': {
+        const avgT = v.tires.reduce((a, t) => a + t.surfaceTemp, 0) / 4;
+        const opt = v.tires[0].compound.optimalTemp;
+        const temp = avgT < opt - 20 ? 'ancora fredde' : avgT > opt + 15 ? 'troppo calde, gestiscile' : 'in temperatura';
+        const life = e.treadPerLap ? Math.max(0, (tread - 0.2) / e.treadPerLap) : null;
+        say(`${v.tires[0].compound.name}: battistrada al ${(tread * 100).toFixed(0)}%, ${temp} (${avgT.toFixed(0)}°)`
+          + (life !== null ? `. Ne hanno per circa <b>${Math.floor(life)} giri</b>` : '') + '.');
+        break;
+      }
+      case 'benzina': {
+        const perLap = this.fuelPerLapOf(e);
+        const laps = v.fuel / perLap;
+        let t = `${v.fuel.toFixed(1)} kg, bastano per ${laps.toFixed(1)} giri`;
+        if (lapsLeft !== null) {
+          t += laps >= lapsLeft + 0.2 ? `: <b>arrivi in fondo</b> (mancano ${lapsLeft} giri).`
+            : v.car.pit?.refuel === false ? `: <b>non basta</b>, ne mancano ${lapsLeft}. Risparmia: alza il piede prima delle frenate.`
+              : `: <b>non basta</b>, ne mancano ${lapsLeft}. Serve una sosta con ~${Math.ceil((lapsLeft + 0.5) * perLap - v.fuel)} kg.`;
+        }
+        say(t);
+        break;
+      }
+      case 'distacchi': {
+        if (!s.isRace) {
+          const best = e.competitor.timing.best?.time;
+          say(`Sei P${e.competitor.position} di ${s.competitors.length}` + (best ? `, miglior giro ${best.toFixed(3)}` : '') + (s.timeLeft !== null ? `. Mancano ${fmtClock(s.timeLeft)}.` : '.'));
+          break;
+        }
+        const st = s.standings();
+        const k = st.indexOf(e.competitor);
+        let t = `P${k + 1}, mancano ${lapsLeft} giri`;
+        const ahead = k > 0 ? st[k - 1] : null, behind = k < st.length - 1 ? st[k + 1] : null;
+        if (ahead) {
+          const at = ahead.timing.timeAtDistance(e.competitor.timing.totalDistance);
+          if (at !== null) t += `. Davanti ${ahead.name} a ${(e.competitor.timing.sessionTime - at).toFixed(1)} s`;
+        }
+        if (behind && !behind.retired) {
+          const bt = e.competitor.timing.timeAtDistance(behind.timing.totalDistance);
+          if (bt !== null) t += `, dietro ${behind.name} a ${(behind.timing.sessionTime - bt).toFixed(1)} s`;
+        }
+        say(t + '.');
+        break;
+      }
+      case 'meteo':
+        say(this.weatherReport());
+        break;
+      case 'danni':
+        say(this.damageReport());
+        break;
+      case 'batteria': {
+        const h = v.hybrid;
+        if (!h.hasErs) { say('Questa auto non ha la batteria.'); break; }
+        say(`Batteria al ${(h.charge * 100).toFixed(0)}%, modalità ${ERS_MODE_NAMES[h.mode]}.`
+          + (h.overtakeAvailable ? ' <b>Overtake disponibile: premi O.</b>' : '')
+          + (h.charge < 0.15 ? " Ricarica un po' prima di attaccare." : ''));
+        break;
+      }
+      case 'strategia':
+        say(this.strategyAdvice());
+        break;
+      case 'mescola':
+        if (i.compound) {
+          this.pitPlan.compound = i.compound;
+          this.pitPlan.changeTyres = true;
+        }
+        say(`Ricevuto: <b>${comp(this.pitPlan.compound)}</b> alla prossima sosta.`);
+        break;
+      case 'riparaAla':
+        this.pitPlan.repair = true;
+        say("Ricevuto, prepariamo un'ala nuova alla prossima sosta (circa 6 secondi in più).");
+        break;
+      case 'boxOra': {
+        if (!this.track.pit) { say("Su questa pista non c'è la corsia box."); break; }
+        this.boxCall = true;
+        this.boxCallReminded = false;
+        this.pitPlan.changeTyres = true;
+        const parts = [`gomme ${comp(this.pitPlan.compound)}`];
+        if (this.pitPlan.addFuel > 0 && v.car.pit?.refuel !== false) parts.push(`${this.pitPlan.addFuel.toFixed(0)} kg di benzina`);
+        if (this.pitPlan.repair) parts.push('ala nuova');
+        say(`<b>Box, box, questo giro.</b> Ti aspettiamo: ${parts.join(', ')}. Entra nella corsia box alla fine del giro.`);
+        break;
+      }
+      case 'annullaBox':
+        this.boxCall = false;
+        say('Ricevuto, resta fuori. Annulliamo la sosta.');
+        break;
+    }
+  }
+
+  /** Consiglio di strategia: quando fermarsi e con che gomme. */
+  private strategyAdvice(): string {
+    const e = this.playerEntity, v = e.vehicle, s = this.session;
+    if (!s.isRace) return 'In prova: fai giri e prendi confidenza, il consumo delle gomme lo misuriamo noi.';
+    const wetCall = this.weatherCompoundCall();
+    if (wetCall) return wetCall;
+    const lapsLeft = Math.max(0, s.config.laps - e.competitor.lapsDone);
+    if (lapsLeft <= 0) return 'Ultimo giro: porta a casa la macchina!';
+    const tread = Math.min(...v.tires.map((t) => t.tread));
+    const life = e.treadPerLap ? (tread - 0.22) / e.treadPerLap : Infinity;
+    const fuelLaps = v.fuel / this.fuelPerLapOf(e);
+    const needRule = this.compoundRuleActive() && e.compoundsUsed.size < 2;
+    const comps = this.car.tire.compounds;
+    const ids = Object.keys(comps).filter((id) => !comps[id].wet);
+    const pickFor = (laps: number) => (laps > 12 ? ids[ids.length - 1] : laps > 6 ? ids[Math.floor(ids.length / 2)] : ids[0]);
+    const reasons: string[] = [];
+    if (life < lapsLeft) reasons.push(`le gomme durano ancora ~${Math.max(0, Math.floor(life))} giri`);
+    if (fuelLaps < lapsLeft && v.car.pit?.refuel !== false) reasons.push(`la benzina basta per ${fuelLaps.toFixed(1)} giri`);
+    if (needRule) reasons.push('devi ancora montare la seconda mescola');
+    if (!reasons.length) return `Mancano ${lapsLeft} giri: gomme e benzina bastano, <b>restiamo fuori</b> fino alla fine.`;
+    const when = Math.max(0, Math.min(Math.floor(life), lapsLeft - 1, needRule ? Math.round(lapsLeft * 0.5) : 99));
+    const c = pickFor(lapsLeft - when);
+    this.pitPlan.compound = c;
+    return `${reasons.join(', ')}: <b>sosta ${when <= 1 ? 'questo giro o il prossimo' : `tra ${when} giri`}</b>, gomme ${comps[c].name}. Dimmi "box" quando vuoi.`;
+  }
+
+  /** Previsioni del tempo per la radio. */
+  private weatherReport(): string {
+    return 'Asciutto, niente pioggia in vista.';
+  }
+
+  /** Consiglio sulle gomme se quelle montate non vanno bene per il meteo (null = tutto ok). */
+  private weatherCompoundCall(): string | null {
+    return null;
+  }
+
+  /** Stato dei danni per la radio. */
+  private damageReport(): string {
+    return 'La macchina è a posto, nessun danno.';
+  }
+
 
   /** Apre il menu assetto. */
   private async openSetup(): Promise<void> {
@@ -997,6 +1165,7 @@ export class Game {
 
     // ---- 1) comandi e fisica di ogni auto ----
     this.entities.forEach((e, k) => {
+      if (e.parked) return; // portata via dai commissari: non guida e non si muove più
       let input: DriverInput;
       // ---- corsia box: ingresso (pilota o bot con sosta richiesta) e pilota automatico ----
       if (!e.pit && !finished && this.track.pit && e.stall) {
@@ -1020,7 +1189,7 @@ export class Game {
         input = finished ? { ...emptyInput(), brake: 0.3 } : this.input.read(dt, e.vehicle.speed, this.aids.keyboardSteerAssist);
         this.lastSteer = input.steer;
       } else {
-        const others = traffic.filter((_, j) => j !== k);
+        const others = traffic.filter((_, j) => j !== k && !this.entities[j].parked);
         const cmd = e.bot!.drive(dt, e.s, e.d, e.competitor.timing.totalDistance, others, hold);
         // i bot che hanno finito proseguono piano (giro di rientro)
         input = e.competitor.finished || finished ? { ...cmd, throttle: Math.min(cmd.throttle, 0.25) } : cmd;
@@ -1031,7 +1200,7 @@ export class Game {
     this.updateFlags(traffic, L);
 
     // ---- 2) collisioni ----
-    const hits = resolveCollisions(this.entities.map((e) => e.vehicle));
+    const hits = resolveCollisions(this.entities.filter((e) => !e.parked).map((e) => e.vehicle));
     this.contactCooldown -= dt;
     for (const h of hits) {
       if (h.speed > 2) this.contactCount++;
@@ -1043,6 +1212,7 @@ export class Game {
 
     // ---- 3) posizione in pista, cronometraggio, sicurezza ----
     for (const e of this.entities) {
+      if (e.parked) continue;
       const p = this.track.project(e.vehicle.x, e.vehicle.z, e.hint);
       e.hint = p.index;
       e.s = p.s;
@@ -1052,20 +1222,10 @@ export class Game {
       if (!e.competitor.finished) e.competitor.timing.update(dt, p.s, allOff);
       const fa = this.failAt.get(e);
       if (fa !== undefined && !e.competitor.retired && !e.competitor.finished && e.competitor.timing.totalDistance > fa) this.mechanicalFailure(e);
-      const park = this.toPark.get(e);
-      if (park !== undefined) {
-        // l'auto rotta rallenta; ferma (o dopo qualche secondo) la si porta ai box, fuori dai piedi
-        const left = park - dt;
-        if (left <= 0 || e.vehicle.speed < 2) {
-          this.toPark.delete(e);
-          if (!this.placeInPits(e)) e.vehicle.reset(1e5 + Math.random() * 1e3, 1e5, 0);
-          e.competitor.timing.resetPosition();
-        } else this.toPark.set(e, left);
-      }
       if (e.isPlayer) {
         if (Math.abs(p.d) > 120) this.resetToTrack(e); // rete di sicurezza
       } else if (e.competitor.retired) {
-        // ritirato: resta dov'è
+        if (!e.parked) this.updateRetired(e, dt);
       } else if (e.vehicle.fuel <= 0 && e.vehicle.speed < 1) {
         e.competitor.retired = true;
         if (this.session.isRace) this.radio(`${e.name} si è ritirato: senza benzina.`, 4);
@@ -1096,7 +1256,7 @@ export class Game {
     for (const e of this.entities) {
       let f = 0;
       for (const o of this.entities) {
-        if (o === e) continue;
+        if (o === e || o.parked) continue;
         let gap = o.s - e.s;
         if (gap < -L / 2) gap += L;
         if (gap > L / 2) gap -= L;
@@ -1114,7 +1274,7 @@ export class Game {
     const myTotal = me.competitor.timing.totalDistance;
     let yellow = false, blue = false;
     traffic.forEach((o, j) => {
-      if (this.entities[j] === me) return;
+      if (this.entities[j] === me || this.entities[j].parked) return;
       let gap = o.s - me.s;
       if (gap < -L / 2) gap += L;
       if (gap > L / 2) gap -= L;
@@ -1131,7 +1291,23 @@ export class Game {
   private handleActions(): void {
     for (const a of this.input.consumeActions()) {
       if (!this.started) continue;
+      // menu radio aperto: batteria su/giù scelgono la voce, flashback lo chiude
+      if (this.boxRadio.menuOpen) {
+        if (a === 'ersUp') { this.boxRadio.move(-1); continue; }
+        if (a === 'ersDown') { this.boxRadio.move(1); continue; }
+        if (a === 'flashback') { this.boxRadio.closeMenu(); continue; }
+      }
+      if (a.startsWith('radio') && a.length === 6) {
+        if (this.boxRadio.menuOpen) this.boxRadio.pick(parseInt(a.slice(5)) - 1);
+        continue;
+      }
       switch (a) {
+        case 'radio':
+          this.boxRadio.toggleMenu();
+          break;
+        case 'talk':
+          this.boxRadio.listen((why) => this.boxRadio.say(why, { prio: 'info', seconds: 6 }));
+          break;
         case 'camera':
           this.hud.message(`Telecamera: ${this.cameras.next()}`, 1);
           break;
@@ -1226,7 +1402,7 @@ export class Game {
           s: e.s, d: e.d, hint: e.hint, wheelHints: [...e.wheelHints], pitHints: [...e.pitHints],
           stall: e.stall, pitRequest: e.pitRequest ? { ...e.pitRequest } : null, pitStops: e.pitStops,
           fuelAtLine: e.fuelAtLine, fuelPerLap: e.fuelPerLap, ruleChecked: e.ruleChecked,
-          compoundsUsed: new Set(e.compoundsUsed),
+          compoundsUsed: new Set(e.compoundsUsed), parked: e.parked, retireT: e.retireT,
         },
       })),
       session: snapshot(this.session),
@@ -1288,6 +1464,21 @@ export class Game {
     this.opponentSound.setPaused(false);
   }
 
+  /** "Box questo giro": avviso quando manca poco all'ingresso della corsia box */
+  private updateBoxCall(): void {
+    if (!this.boxCall || !this.track.pit || this.playerEntity.pit) return;
+    let toEntry = this.pitEntryS - this.playerEntity.s;
+    if (toEntry < 0) toEntry += this.track.length;
+    if (toEntry < 500 && toEntry > 50 && !this.boxCallReminded) {
+      this.boxCallReminded = true;
+      this.radio('<b>Box, box! Entra ai box adesso.</b>', 5, 'urgente');
+    } else if (toEntry > this.track.length - 100 && this.boxCallReminded) {
+      // ingresso passato senza entrare
+      this.boxCall = false;
+      this.radio('Hai saltato il box: resta fuori, riproviamo al prossimo giro se vuoi.', 6, 'importante');
+    }
+  }
+
   private togglePause(show = true): void {
     if (this.loop.paused) {
       this.overlay.hide();
@@ -1298,6 +1489,7 @@ export class Game {
       this.loop.paused = true;
       this.sound.setPaused(true);
       this.opponentSound.setPaused(true);
+      this.boxRadio.silence();
       if (!show) return;
       this.overlay.showPause(() => this.togglePause(), [
         { label: '↻ Ricomincia sessione', act: () => this.startSession(this.sessionCfg) },
@@ -1463,6 +1655,34 @@ export class Game {
     }
   }
 
+  /**
+   * Auto ritirata (guasto, senza benzina, danni): accosta fuori pista e si ferma; poi i commissari
+   * la portano via. Ferma fuori dalla carreggiata basta poco; in mezzo alla pista ci vuole di più
+   * (in gara è il momento della safety car). Tolta di scena non è più vista da nessuno.
+   */
+  private updateRetired(e: CarEntity, dt: number): void {
+    e.bot!.pullOver = true;
+    const v = e.vehicle;
+    const onTrack = Math.abs(e.d) < this.track.at(e.hint).width / 2 + 1;
+    e.retireT += dt;
+    const stopped = v.speed < 1.5;
+    const wait = !this.session.isRace ? 5 : onTrack ? this.marshalTimeOnTrack() : 8;
+    if ((stopped && e.retireT > wait) || e.retireT > 45) this.parkRetired(e);
+  }
+
+  /** Tempo che serve ai commissari per togliere un'auto ferma in pista (gara). */
+  private marshalTimeOnTrack(): number {
+    return 15;
+  }
+
+  /** Toglie di scena un'auto ritirata (finita "nel garage"). */
+  private parkRetired(e: CarEntity): void {
+    e.parked = true;
+    const k = this.entities.indexOf(e);
+    e.vehicle.reset(1e5 + k * 50, 1e5, 0);
+    e.competitor.timing.resetPosition();
+  }
+
   private mechanicalFailure(e: CarEntity): void {
     this.failAt.delete(e);
     e.competitor.retired = true;
@@ -1473,7 +1693,6 @@ export class Game {
       this.finishSim = { delay: 4, started: false };
     } else {
       this.radio(`${e.name}: guasto ${what}, ritirato.`, 4);
-      this.toPark.set(e, 6);
     }
   }
 
@@ -1521,6 +1740,7 @@ export class Game {
     this.sound.setPaused(true);
     this.opponentSound.setPaused(true);
     this.loop.paused = false;
+    for (const e of this.entities) e.view.rig.root.visible = true;
     const cars = this.entities.map((e) => ({ name: e.name, vehicle: e.vehicle, view: e.view }));
     this.replayPlayer = new ReplayPlayer(this.replayRec, cars, this.cameras, this.renderer.camera, this.track, () => {
       this.replayPlayer = null;
@@ -1536,6 +1756,7 @@ export class Game {
     this.renderer.applyQuality(s.quality);
     this.renderer.applyStyle(s);
     this.sound.setVolume(s.volume);
+    if (this.boxRadio) this.boxRadio.opts = { voice: s.radioVoice, volume: Math.min(1, s.radioVolume * Math.max(0.3, s.volume * 2)) };
     if (s.showFps && !this.fpsEl) {
       this.fpsEl = document.createElement('div');
       this.fpsEl.className = 'hud-panel hud-fps mono';
@@ -1551,7 +1772,7 @@ export class Game {
     const me = this.vehicle;
     let best: CarEntity | null = null, bd = 90;
     for (const e of this.entities) {
-      if (e.isPlayer) continue;
+      if (e.isPlayer || e.parked) continue;
       const d = Math.hypot(e.vehicle.x - me.x, e.vehicle.z - me.z);
       if (d < bd) { bd = d; best = e; }
     }
@@ -1610,6 +1831,8 @@ export class Game {
       return;
     }
     this.handleActions();
+    this.boxRadio.update(frameDt);
+    this.updateBoxCall();
     if (this.fb) {
       // si riparte premendo l'acceleratore (prima va rilasciato, se era già premuto)
       const thr = this.input.read(frameDt, 0, false).throttle;
@@ -1617,7 +1840,10 @@ export class Game {
       else if (this.fb.armed && thr > 0.4) this.endFlashback();
     }
     const v = this.vehicle;
-    for (const e of this.entities) e.view.update(alpha);
+    for (const e of this.entities) {
+      e.view.rig.root.visible = !e.parked;
+      if (!e.parked) e.view.update(alpha);
+    }
     this.cameras.update(frameDt, v.speed);
     this.renderer.followShadows(this.playerEntity.view.position);
 
@@ -1678,7 +1904,7 @@ export class Game {
 
     // minimappa (nascosta quando a destra c'è la telemetria o l'elenco dei giri)
     this.minimap.visible = !this.hud.telemetry.classList.contains('show') && this.hud.lapList.style.display !== 'block';
-    this.minimap.update(this.entities.map((e) => ({
+    this.minimap.update(this.entities.filter((e) => !e.parked).map((e) => ({
       x: e.vehicle.x, z: e.vehicle.z, yaw: e.vehicle.yaw, color: e.color ?? '#ffffff', player: e.isPlayer,
       dim: !!e.pit || e.competitor.retired,
     })));

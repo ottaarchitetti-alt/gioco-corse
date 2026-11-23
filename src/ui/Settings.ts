@@ -23,9 +23,12 @@ export interface GameSettings {
   /** stile grafico e grandezza dei pixel (pixel art) */
   style: GraphicStyle;
   pixelSize: PixelSize;
+  /** il box parla (voce sintetica) e volume della radio (0..1) */
+  radioVoice: boolean;
+  radioVolume: number;
 }
 
-const DEFAULTS: GameSettings = { quality: 'alta', showFps: false, volume: 0.5, opponentVolume: 0.6, style: 'realistico', pixelSize: 'medio' };
+const DEFAULTS: GameSettings = { quality: 'alta', showFps: false, volume: 0.5, opponentVolume: 0.6, style: 'realistico', pixelSize: 'medio', radioVoice: true, radioVolume: 0.9 };
 /** versione delle impostazioni grafiche: con la 2 lo stile predefinito torna "realistico" */
 const STYLE_VERSION = 2;
 
@@ -76,6 +79,12 @@ export function openSettings(s: GameSettings, onChange: (s: GameSettings) => voi
           <label>Volume generale <input type="range" min="0" max="1" step="0.05" value="${s.volume}" data-k="volume"></label>
           <label>Motori degli avversari <input type="range" min="0" max="1" step="0.05" value="${s.opponentVolume}" data-k="opponentVolume"></label>
         </div>
+        <h2>Radio del box</h2>
+        <div class="form">
+          <label class="row"><input type="checkbox" data-k="radioVoice" ${s.radioVoice ? 'checked' : ''}> Il box parla (voce italiana del browser)</label>
+          <label>Volume della radio <input type="range" min="0" max="1" step="0.05" value="${s.radioVolume}" data-k="radioVolume"></label>
+          <p class="small">In gara: <b>B</b> menu radio (numeri 1–9), <b>V</b> parli al box col microfono (Chrome/Edge, serve internet). Volante: R2 radio, L2 microfono.</p>
+        </div>
         <div class="actions"><button data-a="close">Chiudi</button></div>
       </div>`;
     el.querySelectorAll<HTMLButtonElement>('[data-st]').forEach((b) =>
@@ -90,7 +99,7 @@ export function openSettings(s: GameSettings, onChange: (s: GameSettings) => voi
     el.querySelectorAll<HTMLInputElement>('[data-k]').forEach((i) =>
       i.addEventListener(i.type === 'range' ? 'input' : 'change', () => {
         const k = i.dataset.k as keyof GameSettings;
-        if (k === 'showFps') s.showFps = i.checked;
+        if (k === 'showFps' || k === 'radioVoice') (s as unknown as Record<string, boolean>)[k] = i.checked;
         else (s as unknown as Record<string, number>)[k] = parseFloat(i.value);
         saveSettings(s);
         onChange(s);

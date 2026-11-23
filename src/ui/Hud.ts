@@ -105,8 +105,6 @@ export class Hud {
   private startLights: HTMLDivElement;
   readonly lapList: HTMLDivElement;
   private flag: HTMLDivElement;
-  private radioEl: HTMLDivElement;
-  private radioTimer = 0;
   private pitEl: HTMLDivElement;
 
   constructor(root: HTMLElement) {
@@ -129,10 +127,9 @@ export class Hud {
     this.startLights = h('hud-panel hud-lights', '<span></span>'.repeat(5));
     this.lapList = h('hud-panel hud-laplist mono');
     this.flag = h('hud-panel hud-flag');
-    this.radioEl = h('hud-panel hud-radio');
     this.pitEl = h('hud-panel hud-pit');
     this.tyres = h('hud-panel hud-tyres', `<div class="title"></div><div class="grid">${'<div class="tyre"><div class="t mono"></div><div class="p mono"></div><div class="w"><i></i></div></div>'.repeat(4)}</div><div class="fuel mono"></div>`);
-    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.radioEl, this.pitEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
+    root.append(this.laps, this.standings, this.startLights, this.lapList, this.flag, this.pitEl, this.dash, this.inputs, this.info, this.msg, this.telemetry, this.tyres);
     this.lights = Array.from(this.dash.querySelectorAll('.shift-lights span'));
   }
 
@@ -143,12 +140,6 @@ export class Hud {
     this.msgTimer = seconds;
   }
 
-  /** Messaggio radio dal box (resta qualche secondo). */
-  radio(html: string, seconds = 5): void {
-    this.radioEl.innerHTML = html;
-    this.radioEl.style.display = 'block';
-    this.radioTimer = seconds;
-  }
 
   /** Toglie subito il messaggio a schermo. */
   clearMessage(): void {
@@ -162,10 +153,6 @@ export class Hud {
       if (this.msgTimer <= 0) this.msg.classList.remove('show');
     }
 
-    if (this.radioTimer > 0) {
-      this.radioTimer -= frameDt;
-      if (this.radioTimer <= 0) this.radioEl.style.display = 'none';
-    }
     // pit stop
     if (d.pit) {
       const txt = d.pit.phase === 'sosta'

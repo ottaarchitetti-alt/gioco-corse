@@ -257,3 +257,9 @@ body.replay-mode #ui .hud-panel { display: none !important; }
 .hud-weather .wb i { display: block; height: 100%; }
 .hud-weather .wr b { text-align: right; font-variant-numeric: tabular-nums; }
 .hud-weather .wf { margin-top: 3px; color: var(--hud-dim); }
+
+/* ===== Direzione gara: safety car, VSC, bandiera rossa ===== */
+.hud-flag.rc { font-size: 17px; padding: 8px 18px; border: 2px solid; }
+.hud-flag.rc.sc, .hud-flag.rc.vsc { background: rgba(40, 32, 0, 0.92); border-color: #ffd400; color: #fff3b0; }
+.hud-flag.rc.sc b, .hud-flag.rc.vsc b { color: #ffd400; }
+.hud-flag.rc.rossa { background: rgba(70, 0, 0, 0.92); border-color: #ff3030; }

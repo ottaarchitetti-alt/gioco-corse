@@ -120,6 +120,36 @@ Risultato (monoposto, bot da solo): Melbourne Medio 1'42" → 1'36", Esperto 1'4
 Monaco Medio 1'34" → 1'28"; GT a Spa Esperto 2'40" → 2'38". Contatti in gruppo come prima.
 Misura: `devTools.passo({ difficulty: 'medio' })` (giri di un bot da solo e profilo teorico).
 
+**Radio del box** (`src/game/BoxRadio.ts`). Messaggi grandi in alto al centro (box, tu, direzione
+gara), i più importanti anche **a voce** (voce italiana del browser, si spegne in Impostazioni).
+- **B** (volante R2, gamepad croce sinistra): menu radio con i numeri 1–9: gomme, benzina,
+  distacchi, meteo, danni, strategia, "box questo giro", mescola per la sosta, annulla la sosta.
+  Sul volante: batteria su/giù per scegliere, R2 per confermare, quadrato per chiudere.
+- **V** (volante L2, gamepad croce destra): parli al box col **microfono** ("box questo giro",
+  "come vanno le gomme?", "metti le intermedie", "cambiate l'ala"...). Usa il riconoscimento
+  vocale di Chrome/Edge, che passa dai loro server: serve internet.
+- Con "box questo giro" il box ti ricorda di entrare ~500 m prima della corsia box.
+
+**Ritiri.** Un'auto ritirata (guasto, benzina finita, danni) accosta fuori pista, si ferma e i
+commissari la portano via (anche dopo un flashback non resta più ferma a metà pista).
+
+**Danni** (`src/physics/Damage.ts`). Gli urti rompono la parte colpita: ala anteriore (sottosterzo),
+ala posteriore e fondo (meno carico), sospensioni (l'auto tira da un lato), motore (meno potenza),
+forature (gomma quasi senza aderenza). Pannello nell'HUD e report alla radio. Ai box: ala nuova
+(+6 s) e gomme nuove contro le forature. Danni gravissimi: ritiro in gara, riparazione in prova.
+
+**Meteo** (`src/race/Weather.ts`, grafica in `src/render/RainFx.ts`). Asciutto, variabile o
+pioggia (menu della sessione; in carriera deciso per ogni weekend). La pioggia arriva e smette, la
+pista si bagna e si asciuga; gomme **intermedie** e **da bagnato**; slick inguidabili sul
+bagnato, gomme da pioggia che si sbriciolano sull'asciutto. Il box avvisa e propone le gomme
+giuste; i bot cambiano gomme da soli. Pioggia, cielo coperto, asfalto lucido, spruzzi.
+
+**Direzione gara** (`src/race/RaceControl.ts`). Auto ferma vicino al bordo → **VSC** (limite di
+velocità nell'HUD, +5 s se lo superi). Auto ferma in pista → **safety car** vera davanti al
+leader: niente sorpassi (+5 s), il gruppo si ricompatta, dopo 2 giri rientra e si riparte dal
+traguardo. Tre auto ferme o pioggia troppo forte → **bandiera rossa**: gomme e riparazioni
+gratis, ripartenza da fermo in griglia nell'ordine della classifica.
+
 **Tempi indicativi dei bot "esperto"** con la monoposto: Monza ~1'30", con la GT
 all'Anello di prova ~53–54 s in "medio".
 

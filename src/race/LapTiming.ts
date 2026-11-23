@@ -98,6 +98,22 @@ export class LapTiming {
     }
   }
 
+  /**
+   * Ripartenza dopo la BANDIERA ROSSA: l'auto è stata messa in griglia alla posizione s (poco
+   * prima del traguardo). Il giro in corso si chiude al prossimo passaggio (non valido) e la
+   * distanza totale riparte da lì: chi aveva fatto meno giri resta dietro in classifica.
+   */
+  redRestart(s: number): void {
+    const L = this.length;
+    if (this.ignoreNextCrossing) this.totalDistance = s > L / 2 ? s - L : s;
+    else this.totalDistance = this.laps.length * L + s;
+    // i tempi di passaggio vanno solo avanti
+    while (this.cpBase + this.checkpoints.length * TRACE_STEP <= this.totalDistance) this.checkpoints.push(this.sessionTime);
+    this.lapDistance = L;
+    this.prevS = s;
+    this.invalidate('bandiera rossa');
+  }
+
   /** Dimentica la posizione precedente (dopo un riposizionamento dell'auto). */
   resetPosition(): void {
     this.prevS = -1;

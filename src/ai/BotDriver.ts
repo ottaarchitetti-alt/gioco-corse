@@ -466,7 +466,8 @@ export class BotDriver {
 
     // accodamento: velocità che permette di fermarsi dietro chi è davanti
     if (front && wantAvoid === null) {
-      const safe = 5.5 + speed * 0.35;
+      // in coda dietro la safety car (o in VSC) si lascia più spazio: il gruppo rallenta a fisarmonica
+      const safe = this.noPass ? 9 + speed * 0.45 : 5.5 + speed * 0.35;
       const closing = Math.sqrt(Math.max(0, front.speed * front.speed + 2 * 7 * Math.max(0, front.gap - safe)));
       vt = Math.min(vt, closing, front.gap < safe ? front.speed * 0.9 : Infinity);
     }

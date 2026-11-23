@@ -88,7 +88,7 @@ export class Competitor {
 
 export type SessionEvent =
   | { type: 'lights'; count: number }
-  | { type: 'go' }
+  | { type: 'go'; restart?: boolean }
   | { type: 'jumpStart'; c: Competitor }
   | { type: 'flag' }
   | { type: 'finished'; c: Competitor }
@@ -104,6 +104,8 @@ export class Session {
   private lightsTimer = 0;
   private lightsOutDelay: number;
   private flagTime = 0;
+  /** Ripartenza da fermo dopo la bandiera rossa (al via non si riparte dal giro 1) */
+  private restarting = false;
 
   constructor(readonly config: SessionConfig, private trackLength: number, private onEvent: (e: SessionEvent) => void) {
     this.state = config.type === 'gara' ? 'semaforo' : 'corsa';
@@ -161,9 +163,10 @@ export class Session {
         this.state = 'corsa';
         for (const c of this.competitors) {
           c.timing.running = true;
-          c.timing.startRace();
+          if (!this.restarting) c.timing.startRace();
         }
-        this.onEvent({ type: 'go' });
+        this.onEvent({ type: 'go', restart: this.restarting });
+        this.restarting = false;
       }
       this.updatePositions(); // in griglia: posizioni = ordine di partenza
       return;
@@ -208,6 +211,15 @@ export class Session {
     c.finishLaps = c.lapsDone;
     c.finishDistance = c.timing.totalDistance;
     this.onEvent({ type: 'finished', c });
+  }
+
+  /** Bandiera rossa finita: di nuovo il semaforo, partenza da fermo (i giri continuano). */
+  restart(): void {
+    this.state = 'semaforo';
+    this.lightsTimer = 0;
+    this.lights = 0;
+    this.lightsOutDelay = 0.4 + Math.random() * 2.2;
+    this.restarting = true;
   }
 
   /** Il pilota lascia la sessione prima della fine (per le prove libere illimitate). */

@@ -46,6 +46,8 @@ export interface HudData {
   lights: number;
   /** Bandiera da mostrare */
   flag: 'gialla' | 'blu' | null;
+  /** Direzione gara: safety car, VSC, bandiera rossa (ha la precedenza sulle bandiere) */
+  rc: { cls: string; html: string } | null;
   /** Sei nella scia di un'altra auto */
   draft: boolean;
   /** Carburante a bordo (kg) e giri stimati */
@@ -174,10 +176,11 @@ export class Hud {
     this.renderStandings(d.standings);
     this.startLights.style.display = d.lights >= 0 ? 'flex' : 'none';
     this.startLights.querySelectorAll('span').forEach((l, i) => l.classList.toggle('on', i < d.lights));
-    const flagHtml = d.flag === 'blu'
+    const flagHtml = d.rc ? d.rc.html : d.flag === 'blu'
       ? '<span class="f blu"></span> Bandiera blu: lascia passare'
       : d.flag === 'gialla' ? '<span class="f gialla"></span> Bandiera gialla: rallenta' : d.draft ? '💨 In scia' : '';
     this.flag.style.display = flagHtml ? '' : 'none';
+    this.flag.className = `hud-panel hud-flag ${d.rc ? 'rc ' + d.rc.cls : ''}`;
     if (this.flag.innerHTML !== flagHtml) this.flag.innerHTML = flagHtml;
 
     (this.dash.querySelector('.speed') as HTMLElement).textContent = Math.round(d.speedKmh).toString();

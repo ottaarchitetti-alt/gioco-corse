@@ -24,6 +24,7 @@ import { GhostPlayer, GhostRecorder } from '../race/Ghost';
 import { ReplayPlayer, ReplayRecorder } from '../race/Replay';
 import { Minimap } from '../ui/Minimap';
 import { RainFx } from '../render/RainFx';
+import { RaceControl } from '../race/RaceControl';
 import { BoxRadio, type RadioIntent, type RadioPrio } from './BoxRadio';
 import { Weather, WEATHER_NAMES, idealTyreClass, tyreClassOf, wetGripFactor, type WeatherMode } from '../race/Weather';
 import {
@@ -196,6 +197,13 @@ export class Game {
   private weatherTimer = 0;
   /** Pioggia, cielo coperto, asfalto bagnato, spruzzi */
   private rainFx!: RainFx;
+  /** Direzione gara: VSC, safety car, bandiera rossa */
+  private rc = new RaceControl();
+  /** La safety car (non è un concorrente) */
+  private sc: CarEntity | null = null;
+  private scPrevGap = 0;
+  /** profilo di velocità di riferimento per il limite VSC */
+  private vscProfile: Float32Array | null = null;
   /** Contatti tra auto (velocità d'urto > 2 m/s) dall'avvio: per statistiche e test */
   contactCount = 0;
 
@@ -405,6 +413,9 @@ export class Game {
     const dur = cfg.type === 'gara' ? cfg.laps * (this.track.length / 50) : cfg.minutes > 0 ? cfg.minutes * 60 : 1500;
     this.weather = new Weather(cfg.weather ?? 'asciutto', dur);
     this.rainFx?.clearSpray();
+    this.rc.reset();
+    this.removeSafetyCar();
+    this.vscProfile = null;
 
     // ---- Auto: il pilota + i bot di questa sessione ----
     for (const e of this.entities) if (!e.isPlayer) this.renderer.scene.remove(e.view.rig.root);
@@ -503,7 +514,7 @@ export class Game {
     switch (e.type) {
       case 'go':
         this.hud.message('VIA!', 1.5);
-        if (this.career && this.session.isRace) this.planFailures();
+        if (this.career && this.session.isRace && !e.restart) this.planFailures();
         break;
       case 'jumpStart':
         if (e.c.isPlayer) this.hud.message('Partenza anticipata: +5 s di penalità', 4);
@@ -520,6 +531,7 @@ export class Game {
         break;
       case 'end':
         if (this.session.config.type === 'qualifica') this.lastQualiOrder = this.session.standings().map((c) => c.id);
+        this.removeSafetyCar();
         this.resultsTimer = 2.5; // risultati dopo qualche secondo
         break;
     }
@@ -775,6 +787,7 @@ export class Game {
 
   /** Al passaggio sul traguardo: consumo medio, strategia dei bot, radio per il pilota. */
   private onLapLine(e: CarEntity): void {
+    this.rcLeaderLine(e);
     this.lapLineHybrid(e);
     this.checkCompoundRule(e);
     const used = e.vehicle.fuelUsed - e.fuelAtLine;
@@ -1392,7 +1405,9 @@ export class Game {
         this.lastSteer = input.steer;
       } else {
         const others = traffic.filter((_, j) => j !== k && !this.entities[j].parked);
-        e.bot!.paceScale = this.botPace(e);
+        if (this.sc) others.push({ s: this.sc.s, d: this.sc.d, speed: this.sc.vehicle.speed, total: -1e9, offTrack: false });
+        e.bot!.paceScale = this.botPace(e) * this.rcPace();
+        e.bot!.noPass = this.rc.neutralized || this.rc.noPassUntilLine;
         const cmd = e.bot!.drive(dt, e.s, e.d, e.competitor.timing.totalDistance, others, hold);
         // i bot che hanno finito proseguono piano (giro di rientro)
         input = e.competitor.finished || finished ? { ...cmd, throttle: Math.min(cmd.throttle, 0.25) } : cmd;
@@ -1401,9 +1416,10 @@ export class Game {
       e.vehicle.step(dt, input, aids);
     });
     this.updateFlags(traffic, L);
+    this.driveSafetyCar(dt);
 
     // ---- 2) collisioni ----
-    const hits = resolveCollisions(this.entities.filter((e) => !e.parked).map((e) => e.vehicle));
+    const hits = resolveCollisions([...this.entities.filter((e) => !e.parked).map((e) => e.vehicle), ...(this.sc ? [this.sc.vehicle] : [])]);
     this.contactCooldown -= dt;
     for (const h of hits) {
       if (h.speed > 2) this.contactCount++;
@@ -1449,6 +1465,7 @@ export class Game {
         e.bot!.stuckTime = 0;
       }
     }
+    this.updateRaceControl(dt);
     const t = this.player.timing;
     if (t.lap > 0) this.ghostRec.sample(t.current, this.vehicle.x, this.vehicle.z, this.vehicle.yaw);
 
@@ -1600,7 +1617,7 @@ export class Game {
 
   private flashbackAllowed(): boolean {
     const st = this.session.state;
-    return st !== 'semaforo' && st !== 'finita' && !this.player.finished;
+    return st !== 'semaforo' && st !== 'finita' && !this.player.finished && this.rc.state === 'verde' && !this.sc;
   }
 
   /** Fotografia di tutta la sessione: auto, bot, box, cronometraggio, sessione, fantasma, replay. */
@@ -1621,6 +1638,7 @@ export class Game {
       })),
       session: snapshot(this.session),
       weather: snapshot(this.weather),
+      rc: snapshot(this.rc),
       ghost: snapshot(this.ghostRec),
       replay: snapshot(this.replayRec),
       contacts: this.contactCount,
@@ -1655,6 +1673,8 @@ export class Game {
     }
     restore(this.session, st.session);
     restore(this.weather, st.weather);
+    restore(this.rc, st.rc);
+    if (!this.rc.scOut) this.removeSafetyCar();
     restore(this.ghostRec, st.ghost);
     restore(this.replayRec, st.replay);
     this.contactCount = st.contacts;
@@ -1896,14 +1916,318 @@ export class Game {
     const onTrack = Math.abs(e.d) < this.track.at(e.hint).width / 2 + 1;
     e.retireT += dt;
     const stopped = v.speed < 1.5;
-    const wait = !this.session.isRace ? 5 : onTrack ? this.marshalTimeOnTrack() : 8;
+    const wait = !this.session.isRace ? 5 : onTrack ? this.marshalTimeOnTrack() : this.rc.state === 'vsc' ? 14 : 8;
     if ((stopped && e.retireT > wait) || e.retireT > 45) this.parkRetired(e);
   }
 
   /** Tempo che serve ai commissari per togliere un'auto ferma in pista (gara). */
   private marshalTimeOnTrack(): number {
-    return 15;
+    return this.rc.state === 'sc' ? 30 : 15;
   }
+
+  // =====================================================================
+  //  DIREZIONE GARA: VSC, SAFETY CAR, BANDIERA ROSSA (vedi race/RaceControl.ts)
+  // =====================================================================
+
+  /** Comunicazione della direzione gara (safety car, bandiere...). */
+  private raceControlMsg(html: string, prio: RadioPrio = 'urgente'): void {
+    this.boxRadio?.say(html, { from: 'direzione', prio, seconds: 9 });
+  }
+
+  /** Velocità limite VSC nel punto s (m/s): ~60% del passo normale */
+  private vscLimit(s: number): number {
+    this.vscProfile ??= this.line.speedProfile(this.car, 1, 1);
+    const n = this.line.n;
+    const i = Math.round((((s % this.track.length) + this.track.length) % this.track.length) / (this.track.length / n)) % n;
+    return this.vscProfile[i] * 0.6;
+  }
+
+  /** Ritmo dei bot sotto neutralizzazione */
+  private rcPace(): number {
+    const rc = this.rc;
+    if (rc.state === 'vsc' || (rc.state === 'sc' && !rc.scOut)) return 0.6;
+    if (rc.state === 'sc') return 0.85; // si raggiunge la coda, poi si segue chi è davanti
+    return 1;
+  }
+
+  /** Posizione del pilota tra le auto in pista (senza chi è ai box o ritirato) */
+  private activePosition(): number {
+    const me = this.playerEntity.competitor.timing.totalDistance;
+    let pos = 1;
+    for (const e of this.entities) {
+      if (e.isPlayer || e.pit || e.parked || e.competitor.retired || e.competitor.finished) continue;
+      if (e.competitor.timing.totalDistance > me) pos++;
+    }
+    return pos;
+  }
+
+  private penalize(e: CarEntity, why: string): void {
+    e.competitor.penalty += 5;
+    if (e.isPlayer) this.raceControlMsg(`<b>Penalità di 5 secondi</b>: ${why}.`);
+  }
+
+  /** Ogni passo, in gara: auto ferme → VSC / safety car / bandiera rossa; regole per il pilota. */
+  private updateRaceControl(dt: number): void {
+    const s = this.session, rc = this.rc;
+    if (!s.isRace || s.state !== 'corsa' || rc.state === 'rossa') return;
+    rc.t += dt;
+    // ---- auto ferme dopo un ritiro (in pista o subito fuori) ----
+    let onTrack = 0, near = 0;
+    let incident: 'sc' | 'vsc' | null = null;
+    for (const e of this.entities) {
+      if (!e.competitor.retired || e.parked || e.pit || (e.isPlayer && this.finishSim?.started)) { delete rc.stoppedT[e.id]; continue; }
+      const half = this.track.at(e.hint).width / 2;
+      const ad = Math.abs(e.d);
+      if (e.vehicle.speed < 3 && ad < half + 7) rc.stoppedT[e.id] = (rc.stoppedT[e.id] ?? 0) + dt;
+      else delete rc.stoppedT[e.id];
+      if ((rc.stoppedT[e.id] ?? 0) < 3) continue;
+      const inTrack = ad < half + 0.5;
+      if (inTrack) onTrack++; else near++;
+      if (!rc.handled[e.id]) {
+        rc.handled[e.id] = true;
+        // ferma in pista: safety car; vicino al bordo: di solito VSC (a volte basta la gialla)
+        if (inTrack) incident = 'sc';
+        else if (incident !== 'sc' && Math.random() < 0.7) incident = 'vsc';
+      }
+    }
+    // ---- bandiera rossa: incidente multiplo o pioggia troppo forte ----
+    rc.rainT = this.weather.rain > 0.85 ? rc.rainT + dt : 0;
+    if (onTrack + near >= 3) return this.redFlag('incidente con più auto ferme in pista');
+    if (rc.rainT > 15) return this.redFlag('pioggia troppo forte, pista impraticabile');
+
+    if (incident === 'sc' && rc.state !== 'sc') this.deploySafetyCar();
+    else if (incident === 'vsc' && rc.state === 'verde' && !rc.noPassUntilLine) this.deployVsc();
+
+    const clear = onTrack + near === 0;
+    rc.clearT = clear ? rc.clearT + dt : 0;
+    if (rc.state === 'vsc' && rc.clearT > 8) {
+      rc.state = 'verde';
+      rc.t = 0;
+      this.raceControlMsg('<b>VSC finita: bandiera verde!</b> Si torna a correre.', 'importante');
+    }
+    if (rc.state === 'sc') {
+      if (!rc.scOut && rc.t > 5) this.spawnSafetyCar();
+      // la safety car rientra quando arriva all'ingresso dei box (o a fine giro)
+      if (rc.ending && this.sc) {
+        const L = this.track.length;
+        let toEntry = (this.track.pit ? this.pitEntryS : L - 60) - this.sc.s;
+        if (toEntry < 0) toEntry += L;
+        if (toEntry < 30 || toEntry > L - 20) {
+          this.removeSafetyCar();
+          rc.state = 'verde';
+          rc.noPassUntilLine = true;
+          rc.t = 0;
+          this.raceControlMsg('Safety car ai box: <b>si riparte dal traguardo</b>, niente sorpassi fino alla linea.', 'importante');
+        }
+      }
+    }
+
+    // ---- regole per il pilota ----
+    const me = this.playerEntity;
+    if (me.competitor.retired || me.competitor.finished || me.pit) { rc.gainT = rc.overT = 0; return; }
+    if (rc.neutralized || rc.noPassUntilLine) {
+      const pos = this.activePosition();
+      if (pos < rc.refPos) {
+        rc.gainT += dt;
+        if (rc.gainT > 1 && rc.gainT - dt <= 1) this.raceControlMsg('Hai sorpassato in regime di neutralizzazione: <b>restituisci la posizione</b>.');
+        if (rc.gainT > 8) { this.penalize(me, 'sorpasso sotto safety car/VSC'); rc.refPos = pos; rc.gainT = 0; }
+      } else { rc.refPos = pos; rc.gainT = 0; }
+    }
+    if (rc.state === 'vsc' || (rc.state === 'sc' && !rc.scOut)) {
+      const lim = this.vscLimit(me.s);
+      if (me.vehicle.speed > lim + 3) {
+        rc.overT += dt;
+        if (rc.overT > 3) { this.penalize(me, 'velocità oltre il limite della VSC'); rc.overT = 0; }
+      } else rc.overT = Math.max(0, rc.overT - dt * 0.5);
+    }
+    // sorpasso della safety car
+    if (this.sc && rc.scOut && !rc.passedSc) {
+      let g = this.sc.s - me.s;
+      const L = this.track.length;
+      if (g > L / 2) g -= L;
+      if (g < -L / 2) g += L;
+      if (g < -3 && g > -15 && this.scPrevGap > 0 && this.scPrevGap < 30) { rc.passedSc = true; this.penalize(me, 'sorpasso della safety car'); }
+      this.scPrevGap = g;
+    }
+  }
+
+  private deployVsc(): void {
+    const rc = this.rc;
+    rc.state = 'vsc';
+    rc.t = 0;
+    rc.clearT = 0;
+    rc.refPos = this.activePosition();
+    this.raceControlMsg('<b>VIRTUAL SAFETY CAR</b>: rallenta (limite nell\'HUD), niente sorpassi.');
+  }
+
+  private deploySafetyCar(): void {
+    const rc = this.rc;
+    rc.state = 'sc';
+    rc.t = 0;
+    rc.clearT = 0;
+    rc.scLaps = 0;
+    rc.ending = false;
+    rc.scOut = false;
+    rc.passedSc = false;
+    rc.refPos = this.activePosition();
+    this.raceControlMsg('<b>SAFETY CAR</b>: auto ferma in pista. Rallenta, niente sorpassi.');
+    // occasione per fermarsi: i bot con gomme usate (o senza la seconda mescola) rientrano
+    const s = this.session;
+    for (const e of this.entities) {
+      if (e.isPlayer || e.pit || e.pitRequest || e.competitor.retired || !this.track.pit) continue;
+      const lapsLeft = s.config.laps - e.competitor.lapsDone;
+      const tread = Math.min(...e.vehicle.tires.map((t) => t.tread));
+      const rule = this.compoundRuleActive() && !this.ruleOk(e);
+      if (lapsLeft > 2 && (tread < 0.7 || rule)) {
+        const comps = e.vehicle.car.tire.compounds;
+        const slick = Object.keys(comps).filter((k) => !comps[k].wet && comps[k].name !== e.vehicle.tires[0].compound.name);
+        const pick = this.weatherCompound(e.vehicle) ?? (rule && slick.length ? (lapsLeft > 10 ? slick[slick.length - 1] : slick[0]) : this.compoundIdOf(e.vehicle));
+        e.pitRequest = { changeTyres: true, compound: pick, addFuel: 0, repair: e.vehicle.damage.frontWing > 0.15 };
+      }
+    }
+    if (this.track.pit && !this.playerEntity.competitor.retired) {
+      this.radio('Safety car! <b>Occasione per fermarsi</b>: dimmi "box" se vuoi gomme nuove.', 8, 'importante');
+    }
+  }
+
+  /** La safety car entra in pista davanti al leader */
+  private spawnSafetyCar(): void {
+    const rc = this.rc;
+    rc.scOut = true;
+    const leader = this.session.standings().map((c) => this.entities.find((e) => e.competitor === c)!).find((e) => e && !e.competitor.retired && !e.parked);
+    if (!leader) return;
+    if (!this.sc) {
+      const rig = cloneRig(this.playerRig, '#f2b705', 0);
+      const ent = this.createEntity('safety-car', 'Safety car', false, structuredClone(this.botCar), rig);
+      ent.bot = new BotDriver(this.line, ent.vehicle, { grip: 0.8, brake: 0.75, inconsistency: 0, errorRate: 0, aggression: 0 });
+      ent.bot.speedCap = 200 / 3.6;
+      ent.bot.noPass = true;
+      this.renderer.scene.add(rig.root);
+      this.sc = ent;
+    }
+    // davanti al leader, dove non c'è nessuno
+    const L = this.track.length;
+    let s0 = leader.s + 160;
+    for (let k = 0; k < 6; k++) {
+      const busy = this.entities.some((e) => !e.parked && Math.abs(((e.s - s0 + L * 1.5) % L) - L / 2) < 40);
+      if (!busy) break;
+      s0 += 60;
+    }
+    this.placeOnLine(this.sc, ((s0 % L) + L) % L);
+    // parte già in movimento
+    const v = this.sc.vehicle, sp = 35;
+    v.vx = Math.sin(v.yaw) * sp;
+    v.vz = Math.cos(v.yaw) * sp;
+    v.tires.forEach((t) => (t.omega = sp / v.car.wheelRadius));
+    this.scPrevGap = 0;
+    this.raceControlMsg('La <b>safety car</b> è in pista: mettiti in coda.', 'importante');
+  }
+
+  private removeSafetyCar(): void {
+    if (!this.sc) return;
+    this.renderer.scene.remove(this.sc.view.rig.root);
+    this.sc = null;
+  }
+
+  /** La safety car guida (non è un concorrente: niente classifica né cronometro) */
+  private driveSafetyCar(dt: number): void {
+    const sc = this.sc;
+    if (!sc) return;
+    const p = this.track.project(sc.vehicle.x, sc.vehicle.z, sc.hint);
+    sc.hint = p.index;
+    sc.s = p.s;
+    sc.d = p.d;
+    const cmd = sc.bot!.drive(dt, sc.s, sc.d, -1e9, [], false);
+    sc.vehicle.step(dt, cmd, BOT_AIDS);
+  }
+
+  /** Il leader passa sul traguardo: giri della safety car, rientro, bandiera verde */
+  private rcLeaderLine(e: CarEntity): void {
+    const s = this.session, rc = this.rc;
+    if (!s.isRace || s.state !== 'corsa' || s.standings()[0] !== e.competitor) return;
+    if (rc.noPassUntilLine) {
+      rc.noPassUntilLine = false;
+      this.raceControlMsg('<b>Bandiera verde!</b> Si torna a correre.', 'importante');
+      return;
+    }
+    if (rc.state === 'sc' && rc.scOut) {
+      rc.scLaps++;
+      if (!rc.ending && rc.scLaps >= 2 && rc.clearT > 5) {
+        rc.ending = true;
+        this.raceControlMsg('La safety car <b>rientra alla fine di questo giro</b>.', 'importante');
+      }
+    }
+  }
+
+  /** BANDIERA ROSSA: gara sospesa, poi ripartenza da fermo in griglia */
+  private redFlag(reason: string): void {
+    const rc = this.rc;
+    rc.state = 'rossa';
+    rc.reason = reason;
+    this.removeSafetyCar();
+    this.loop.paused = true;
+    this.sound.setPaused(true);
+    this.opponentSound.setPaused(true);
+    this.boxRadio.silence();
+    this.raceControlMsg(`<b>BANDIERA ROSSA</b>: ${reason}.`);
+    const comps = this.car.tire.compounds;
+    const sel = this.weatherCompound(this.vehicle) ?? this.compoundIdOf(this.vehicle);
+    const st = this.session.standings().filter((c) => !c.retired).slice(0, 12);
+    const html = `
+      <p><b>${reason[0].toUpperCase() + reason.slice(1)}.</b> La gara è sospesa: si riparte <b>da fermo, in griglia</b>,
+      nell'ordine della classifica. I giri fatti restano; i danni vengono riparati e si possono cambiare le gomme.</p>
+      <div class="form"><label>Gomme per la ripartenza <select data-red>${Object.entries(comps).map(([id, c]) => `<option value="${id}" ${id === sel ? 'selected' : ''}>${c.name}</option>`).join('')}</select></label></div>
+      <p class="small">Meteo: ${Weather.rainWord(this.weather.rain)}, pista ${Weather.wetWord(this.weather.wetness)}${reason.includes('pioggia') ? ' (si aspetta che smetta di piovere così forte)' : ''}.</p>
+      <ol class="weekend">${st.map((c) => `<li class="${c.isPlayer ? 'cur' : ''}">${c.name}</li>`).join('')}</ol>`;
+    this.overlay.showResults('🟥 Bandiera rossa', html, [{
+      label: '🚦 Ripartenza', primary: true,
+      act: () => this.restartAfterRed((document.querySelector('[data-red]') as HTMLSelectElement | null)?.value ?? sel),
+    }]);
+  }
+
+  private restartAfterRed(compound: string): void {
+    const rc = this.rc;
+    // pioggia troppo forte: si aspetta che cali (il meteo va avanti)
+    if (rc.reason.includes('pioggia')) {
+      for (let k = 0; k < 240 && this.weather.rainAt(this.weather.time) > 0.6; k++) this.weather.update(15, this.sim.trackTemp);
+      this.weather.wetness = Math.min(this.weather.wetness, 0.85);
+    }
+    for (const e of this.entities) if (e.competitor.retired && !e.parked) this.parkRetired(e);
+    const order = this.session.standings()
+      .map((c) => this.entities.find((e) => e.competitor === c)!)
+      .filter((e) => e && !e.parked && !e.competitor.retired);
+    const L = this.track.length;
+    order.forEach((e, k) => {
+      e.pit = null;
+      e.pitRequest = null;
+      e.vehicle.speedLimiter = 0;
+      e.vehicle.damage.reset();
+      const v = e.vehicle, s = v.car.setup;
+      const id = e.isPlayer ? compound : this.weatherCompound(v) ?? this.compoundIdOf(v);
+      v.fitTyres(id, s.pressureFront, s.pressureRear, this.sim.tyreBlankets ? BLANKET_TEMP : this.sim.airTemp + 20);
+      e.compoundsUsed.add(v.tires[0].compound.name);
+      e.treadAtLine = 1;
+      if (k < this.track.grid.length) {
+        const g = this.track.grid[k];
+        this.placeAt(e, g.x, g.z, g.heading);
+      } else this.placeOnLine(e, L - 6 - k * 8);
+      e.startX = v.x;
+      e.startZ = v.z;
+      e.competitor.timing.redRestart(e.s);
+      if (e.bot) e.bot.stuckTime = 0;
+    });
+    if (this.playerEntity.isPlayer) this.pitPlan.compound = compound;
+    rc.reset();
+    this.session.restart();
+    this.flashback.clear();
+    this.fb = null;
+    this.overlay.hide();
+    this.loop.paused = false;
+    this.sound.setPaused(false);
+    this.opponentSound.setPaused(false);
+    this.raceControlMsg('Ripartenza da fermo: <b>attendi lo spegnimento dei semafori</b>.', 'importante');
+  }
+
 
   /** Toglie di scena un'auto ritirata (finita "nel garage"). */
   private parkRetired(e: CarEntity): void {
@@ -2074,6 +2398,7 @@ export class Game {
       e.view.rig.root.visible = !e.parked;
       if (!e.parked) e.view.update(alpha);
     }
+    this.sc?.view.update(alpha);
     this.cameras.update(frameDt, v.speed);
     this.rainFx.update(frameDt, this.renderer.camera, this.weather.rain, this.weather.wetness, this.entities.map((e) => ({
       key: e, x: e.vehicle.x, z: e.vehicle.z, yaw: e.vehicle.yaw, speed: e.vehicle.speed, visible: !e.parked,
@@ -2103,6 +2428,7 @@ export class Game {
       standings: this.session.standings().map((c) => ({ pos: c.position, name: c.name, gap: this.session.gap(c), player: c.isPlayer })),
       lights: this.session.state === 'semaforo' ? this.session.lights : -1,
       flag: this.flags.blue ? 'blu' : this.flags.yellow ? 'gialla' : null,
+      rc: this.rc.banner(this.rc.state === 'vsc' || (this.rc.state === 'sc' && !this.rc.scOut) ? this.vscLimit(this.playerEntity.s) * 3.6 : null),
       fuel: v.fuel,
       fuelLaps: v.fuel / this.fuelPerLapOf(this.playerEntity),
       limiter: v.speedLimiter > 0,
@@ -2145,7 +2471,7 @@ export class Game {
     this.minimap.update(this.entities.filter((e) => !e.parked).map((e) => ({
       x: e.vehicle.x, z: e.vehicle.z, yaw: e.vehicle.yaw, color: e.color ?? '#ffffff', player: e.isPlayer,
       dim: !!e.pit || e.competitor.retired,
-    })));
+    })).concat(this.sc ? [{ x: this.sc.vehicle.x, z: this.sc.vehicle.z, yaw: this.sc.vehicle.yaw, color: '#f2b705', player: false, dim: false }] : []));
 
     const avgT = (a: number, b: number) => (v.tires[a].effectiveTemp + v.tires[b].effectiveTemp) / 2;
     this.graph.push(frameDt, [
